@@ -1,20 +1,23 @@
 ################################################################################
 # Makefile                                                                     #
 #                                                                              #
-# Description: This file contains the make rules for Recitation 1.             #
+# Description: This file contains the make rules for Liso server project.      #
 #                                                                              #
-# Authors: Athula Balachandran <abalacha@cs.cmu.edu>,                          #
-#          Wolf Richter <wolf@cs.cmu.edu>                                      #
+# Authors: Wenjun Zhang <wenjunzh@andrew.cmu.edu>                              #
 #                                                                              #
 ################################################################################
+CC = gcc
+CFLAGS = -Wall -Werror -lefence
 
-default: lisod echo_client
+EXES = lisod echo_client
+
+default: $(EXES)
 
 lisod:
-	@gcc lisod.c -o lisod -Wall -Werror
+	$(CC) $(CFLAGS) lisod.c -o lisod
 
 echo_client:
-	@gcc echo_client.c -o echo_client -Wall -Werror
+	$(CC) $(CFLAGS) echo_client.c -o echo_client
 
 clean:
-	@rm lisod echo_client
+	@rm -rf $(EXES)

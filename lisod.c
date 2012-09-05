@@ -1,26 +1,26 @@
 /******************************************************************************
-* lisod.c                                                               *
+* lisod.c                                                                     *
 *                                                                             *
-* Description: This file contains the C source code for the Liso server.  The  *
-*              server runs on a hard-coded port and simply write back anything*
-*              sent to it by connected clients.  It does not support          *
-*              concurrent clients.                                            *
+* Description: This file contains the C source code for the Liso server. The  *
+*              implementation is originally based on an echo server written by*
+*              Athula Balachandran <abalacha@cs.cmu.edu> and Wolf Richter     *
+*              <wolf@cs.cmu.edu> from the Course 15441/641 at Carnegie Mellon *
+*              University.                                                    *
 *                                                                             *
-* Authors: Athula Balachandran <abalacha@cs.cmu.edu>,                         *
-*          Wolf Richter <wolf@cs.cmu.edu>                                     *
+*              The server currently support following features:               *
+*              1. echo: simply write back anything sent to it by connected    *
+*                 clients.                                                    *
+*              2. support connections from multiple clients                   *
 *                                                                             *
+* Authors: Wenjun Zhang <wenjunzh@andrew.cmu.edu>,                            *
+*                                                                             *
+* Usage:   ./lisod <HTTP port> <log file>                                     *
 *******************************************************************************/
 
-#include <netinet/in.h>
-#include <netinet/ip.h>
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
-#include <sys/socket.h>
-#include <unistd.h>
+#include "lisod.h"
+#define BUF_SIZE 4096
 
 #define ECHO_PORT 9999
-#define BUF_SIZE 4096
 
 int close_socket(int sock)
 {
