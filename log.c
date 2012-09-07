@@ -1,0 +1,42 @@
+/*
+ * log.c
+ *
+ * Description: This file defines routines to record logs for Liso server
+ *
+ */
+#include "log.h"
+
+FILE *log_open()
+{
+    FILE *logfile;
+
+    logfile = fopen("lisod.log", "w");
+    if ( logfile == NULL )
+    {
+        fprintf(stdout, "Error opening logfile. \n");
+        exit(EXIT_FAILURE);
+    }
+
+    // set logfile to line buffering
+    setvbuf(logfile, NULL, _IOLBF, 0);
+
+    return logfile;
+}
+
+void Log(const char *message)
+{
+    time_t ltime;
+    struct tm *Tm;
+   
+    ltime = time(NULL);
+    Tm = localtime(&ltime);
+
+    fprintf(STATE.logfile, "[%04d%02d%02d %02d:%02d:%02d] %s \n",
+                 Tm->tm_year+1900,
+                 Tm->tm_mon+1,
+                 Tm->tm_mday,
+                 Tm->tm_hour,
+                 Tm->tm_min,
+                 Tm->tm_sec,
+                 message);
+}

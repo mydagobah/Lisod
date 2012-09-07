@@ -1,39 +1,41 @@
-/******************************************************************************
-* lisod.c                                                                     *
-*                                                                             *
-* Description: This file contains the C source code for the Liso server. The  *
-*              implementation is originally based on an echo server written by*
-*              Athula Balachandran <abalacha@cs.cmu.edu> and Wolf Richter     *
-*              <wolf@cs.cmu.edu> from the Course 15441/641 at Carnegie Mellon *
-*              University.                                                    *
-*                                                                             *
-*              The server currently support following features:               *
-*              1. echo: simply write back anything sent to it by connected    *
-*                 clients.                                                    *
-*              2. support connections from multiple clients                   *
-*                                                                             *
-* Authors: Wenjun Zhang <wenjunzh@andrew.cmu.edu>,                            *
-*                                                                             *
-* Usage:   ./lisod <HTTP port> <log file>                                     *
+/*******************************************************************************
+* lisod.c                                                                      *
+*                                                                              *
+* Description: This file contains the C source code for the Liso server. The   *
+*              implementation is originally based on an echo server written by *
+*              Athula Balachandran <abalacha@cs.cmu.edu> and Wolf Richter      *
+*              <wolf@cs.cmu.edu> from the Course 15441/641 at Carnegie Mellon  *
+*              University.                                                     *
+*                                                                              *
+*              The server currently support following features:                *
+*              1. echo: simply write back anything sent to it by connected     *
+*                 clients.                                                     *
+*              2. support connections from multiple clients                    *
+*              3. a default log file 'lisod.log' at the same directory         *
+*                                                                              *
+*                                                                              *
+* Authors: Wenjun Zhang <wenjunzh@andrew.cmu.edu>,                             *
+*                                                                              *
+* Usage:   ./lisod <HTTP port> <log file>                                      *
+*                                                                              *
 *******************************************************************************/
 
 #include "lisod.h"
-#define BUF_SIZE 4096
 
-#define ECHO_PORT 9999
+struct lisod_state STATE;
 
-int close_socket(int sock)
+void init()
 {
-    if (close(sock))
-    {
-        fprintf(stderr, "Failed closing socket.\n");
-        return 1;
-    }
-    return 0;
+    STATE.logfile = log_open();
+    STATE.port = 9999;
 }
 
 int main(int argc, char* argv[])
 {
+    init();
+    
+    Log("Start Liso server");
+    
     int sock, client_sock;
     ssize_t readret;
     socklen_t cli_size;
@@ -42,12 +44,17 @@ int main(int argc, char* argv[])
 
     fprintf(stdout, "----- Echo Server -----\n");
 
-    /* all networked programs must create a socket */
+    /* all networked programs must create a socket 
+     * PF_INET - IPv4 Internet protocols
+     * SOCK_STREAM - sequenced, reliable, two-way, connection-based byte stream
+     * 0 (protocol) - use default protocol 
+     */
     if ((sock = socket(PF_INET, SOCK_STREAM, 0)) == -1)
     {
         fprintf(stderr, "Failed creating socket.\n");
         return EXIT_FAILURE;
     }
+    Log("call socket done!");
 
     addr.sin_family = AF_INET;
     addr.sin_port = htons(ECHO_PORT);
@@ -60,9 +67,9 @@ int main(int argc, char* argv[])
         fprintf(stderr, "Failed binding socket.\n");
         return EXIT_FAILURE;
     }
+    Log("call bind done!");
 
-
-    if (listen(sock, 5))
+    if (listen(sock, MAX_CONN))
     {
         close_socket(sock);
         fprintf(stderr, "Error listening on socket.\n");
@@ -112,6 +119,23 @@ int main(int argc, char* argv[])
     }
 
     close_socket(sock);
+    clean();
 
     return EXIT_SUCCESS;
+}
+
+
+int close_socket(int sock) 
+{
+    if (close(sock))
+    {
+        fprintf(stderr, "Failed closing socket.\n");
+        return 1;
+    }
+    return 0;
+}
+
+void clean()
+{
+    fclose(STATE.logfile);
 }

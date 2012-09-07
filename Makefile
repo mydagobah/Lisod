@@ -14,10 +14,10 @@ EXES = lisod echo_client
 default: $(EXES)
 
 lisod:
-	$(CC) $(CFLAGS) lisod.c -o lisod
+	$(CC) $(CFLAGS) lisod.c log.c -o lisod
 
 echo_client:
 	$(CC) $(CFLAGS) echo_client.c -o echo_client
 
 clean:
-	@rm -rf $(EXES)
+	@rm -rf $(EXES) lisod.log
