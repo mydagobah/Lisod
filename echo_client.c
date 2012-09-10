@@ -32,7 +32,7 @@ int main(int argc, char* argv[])
     }
 
     char buf[BUF_SIZE];
-        
+
     int status, sock;
     struct addrinfo hints;
     struct addrinfo *servinfo; //will point to the results
@@ -40,7 +40,7 @@ int main(int argc, char* argv[])
     hints.ai_socktype = SOCK_STREAM; //TCP stream sockets
     hints.ai_flags = AI_PASSIVE; //fill in my IP for me
 
-    if ((status = getaddrinfo(argv[1], argv[2], &hints, &servinfo)) != 0) 
+    if ((status = getaddrinfo(argv[1], argv[2], &hints, &servinfo)) != 0)
     {
         fprintf(stderr, "getaddrinfo error: %s \n", gai_strerror(status));
         return EXIT_FAILURE;
@@ -51,26 +51,27 @@ int main(int argc, char* argv[])
         fprintf(stderr, "Socket failed");
         return EXIT_FAILURE;
     }
-    
+
     if (connect (sock, servinfo->ai_addr, servinfo->ai_addrlen) == -1)
     {
         fprintf(stderr, "Connect");
         return EXIT_FAILURE;
     }
-        
-    char msg[BUF_SIZE]; 
-    fgets(msg, BUF_SIZE, stdin);
-    
-    int bytes_received;
-    fprintf(stdout, "Sending %s", msg);
-    send(sock, msg , strlen(msg), 0);
-    if((bytes_received = recv(sock, buf, BUF_SIZE, 0)) > 1)
-    {
-        buf[bytes_received] = '\0';
-        fprintf(stdout, "Received %s", buf);
-    }        
 
+    while(1) {
+        char msg[BUF_SIZE];
+        fgets(msg, BUF_SIZE, stdin);
+
+        int bytes_received;
+        fprintf(stdout, "Sending %s", msg);
+        send(sock, msg , strlen(msg), 0);
+        if((bytes_received = recv(sock, buf, BUF_SIZE, 0)) > 1)
+        {
+            buf[bytes_received] = '\0';
+            fprintf(stdout, "Received %s", buf);
+        }
+    }
     freeaddrinfo(servinfo);
-    close(sock);    
+    close(sock);
     return EXIT_SUCCESS;
 }

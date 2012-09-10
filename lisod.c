@@ -33,9 +33,9 @@ void init()
 int main(int argc, char* argv[])
 {
     init();
-    
+
     Log("Start Liso server");
-    
+
     int sock, client_sock;
     ssize_t readret;
     socklen_t cli_size;
@@ -44,10 +44,10 @@ int main(int argc, char* argv[])
 
     fprintf(stdout, "----- Echo Server -----\n");
 
-    /* all networked programs must create a socket 
+    /* all networked programs must create a socket
      * PF_INET - IPv4 Internet protocols
      * SOCK_STREAM - sequenced, reliable, two-way, connection-based byte stream
-     * 0 (protocol) - use default protocol 
+     * 0 (protocol) - use default protocol
      */
     if ((sock = socket(PF_INET, SOCK_STREAM, 0)) == -1)
     {
@@ -75,6 +75,7 @@ int main(int argc, char* argv[])
         fprintf(stderr, "Error listening on socket.\n");
         return EXIT_FAILURE;
     }
+    Log("call listen done!");
 
     /* finally, loop waiting for input and then write it back */
     while (1)
@@ -87,6 +88,7 @@ int main(int argc, char* argv[])
            fprintf(stderr, "Error accepting connection.\n");
            return EXIT_FAILURE;
        }
+       Log("accept client");
 
        readret = 0;
 
@@ -99,6 +101,9 @@ int main(int argc, char* argv[])
                fprintf(stderr, "Error sending to client.\n");
                return EXIT_FAILURE;
            }
+           buf[readret-1] = '\0';
+           Log(buf);
+
            memset(buf, 0, BUF_SIZE);
        }
 
@@ -125,7 +130,7 @@ int main(int argc, char* argv[])
 }
 
 
-int close_socket(int sock) 
+int close_socket(int sock)
 {
     if (close(sock))
     {
