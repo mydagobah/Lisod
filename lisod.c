@@ -24,24 +24,15 @@
 
 struct lisod_state STATE;
 
-void init()
-{
-    STATE.logfile = log_open();
-    STATE.port = 9999;
-}
-
 int main(int argc, char* argv[])
 {
-    init();
-
-    Log("Start Liso server");
-
     int sock, client_sock;
-    ssize_t readret;
-    socklen_t cli_size;
-    struct sockaddr_in addr, cli_addr;
-    char buf[BUF_SIZE];
+    socklen_t client_size;
+    struct sockaddr_in addr, client_addr;
+    static pool pool;
 
+    init();
+    Log("Start Liso server");
     fprintf(stdout, "----- Echo Server -----\n");
 
     /* all networked programs must create a socket
@@ -54,12 +45,12 @@ int main(int argc, char* argv[])
         fprintf(stderr, "Failed creating socket.\n");
         return EXIT_FAILURE;
     }
-    Log("call socket done!");
+    STATE.sock = sock;
+    Log("socket success!");
 
     addr.sin_family = AF_INET;
-    addr.sin_port = htons(ECHO_PORT);
+    addr.sin_port = htons(STATE.port);
     addr.sin_addr.s_addr = INADDR_ANY;
-
     /* servers bind sockets to ports---notify the OS they accept connections */
     if (bind(sock, (struct sockaddr *) &addr, sizeof(addr)))
     {
@@ -67,7 +58,7 @@ int main(int argc, char* argv[])
         fprintf(stderr, "Failed binding socket.\n");
         return EXIT_FAILURE;
     }
-    Log("call bind done!");
+    Log("bind success!");
 
     if (listen(sock, MAX_CONN))
     {
@@ -75,60 +66,167 @@ int main(int argc, char* argv[])
         fprintf(stderr, "Error listening on socket.\n");
         return EXIT_FAILURE;
     }
-    Log("call listen done!");
+    Log("listen success!");
+
+    init_pool(sock, &pool);
 
     /* finally, loop waiting for input and then write it back */
     while (1)
     {
-       cli_size = sizeof(cli_addr);
-       if ((client_sock = accept(sock, (struct sockaddr *) &cli_addr,
-                                 &cli_size)) == -1)
+       pool.ready_set = pool.read_set;
+       pool.nready = select(pool.maxfd+1, &pool.ready_set, NULL, NULL, NULL);
+
+       if (pool.nready < 0)
        {
            close(sock);
-           fprintf(stderr, "Error accepting connection.\n");
+           fprintf(stderr, "Error select connections.\n");
            return EXIT_FAILURE;
        }
-       Log("accept client");
 
-       readret = 0;
-
-       while((readret = recv(client_sock, buf, BUF_SIZE, 0)) > 1)
+       // if sock descriptor ready, add new client to pool
+       if (FD_ISSET(sock, &pool.ready_set))
        {
-           if (send(client_sock, buf, readret, 0) != readret)
+           client_size = sizeof(client_addr);
+           client_sock = accept(sock, (struct sockaddr *) &client_addr,
+                                &client_size);
+
+           if (client_sock == -1)
            {
-               close_socket(client_sock);
-               close_socket(sock);
-               fprintf(stderr, "Error sending to client.\n");
+               clean();
+               fprintf(stderr, "Error accepting connection. \n");
                return EXIT_FAILURE;
            }
-           buf[readret-1] = '\0';
-           Log(buf);
+           Log("accept client");
 
-           memset(buf, 0, BUF_SIZE);
+           add_client(client_sock, &pool);
        }
 
-       if (readret == -1)
-       {
-           close_socket(client_sock);
-           close_socket(sock);
-           fprintf(stderr, "Error reading from client socket.\n");
-           return EXIT_FAILURE;
-       }
-
-       if (close_socket(client_sock))
-       {
-           close_socket(sock);
-           fprintf(stderr, "Error closing client socket.\n");
-           return EXIT_FAILURE;
-       }
+       // process each ready connected descriptor
+       check_clients(&pool);
     }
 
-    close_socket(sock);
     clean();
-
     return EXIT_SUCCESS;
 }
 
+/******************************************************************************
+* subroutine: init                                                            *
+* purpose:    perform all of the initialization                               *
+* parameters: none                                                            *
+* return:     none                                                            *
+******************************************************************************/
+void init()
+{
+    STATE.logfile = log_open();
+    STATE.port = 9999;
+}
+
+/******************************************************************************
+* subroutine: init_pool                                                       *
+* purpose:    setup the initial value for pool attributes                     *
+* parameters: sock - the descriptor server using to listen client connections *
+*             p    - pointer to pool instance                                 *
+* return:     none                                                            *
+******************************************************************************/
+void init_pool (int sock, pool *p)
+{
+    // Initialize descriptors
+    int i;
+    p->maxi = -1;
+    for (i=0; i< FD_SETSIZE; i++)
+        p->clientfd[i] = -1;
+
+    // Initially, sock is the only member of select read set
+    p->maxfd = sock;
+    FD_ZERO(&p->read_set);
+    FD_SET(sock, &p->read_set);
+}
+
+/******************************************************************************
+* subroutine: add_client                                                      *
+* purpose:    add a new client to the pool and update pool attributes         *
+* parameters: client_fd - the descriptor of new client                        *
+*             p    - pointer to pool instance                                 *
+* return:     0 on success, -1 on failure                                     *
+******************************************************************************/
+int add_client(int client_fd, pool *p)
+{
+    int i;
+    p->nready--;
+    for (i=0; i<FD_SETSIZE; i++)
+    {
+        if (p->clientfd[i] < 0)
+        {
+            // add client descriptor to the pool
+            p->clientfd[i] = client_fd;
+
+            // add the descriptor to the descriptor set
+            FD_SET(client_fd, &p->read_set);
+
+            // update max descriptor and pool highwater mark
+            if (client_fd > p->maxfd)
+                p->maxfd = client_fd;
+            if (i > p->maxi)
+                p->maxi = i;
+            break;
+        }
+    }
+    if (i == FD_SETSIZE)
+    {
+        Log ("add_client error: too many clients");
+        return -1;
+    }
+    return 0;
+}
+
+/******************************************************************************
+* subroutine: check_clients                                                   *
+* purpose:    process the ready set from the set of descriptors               *
+* parameters: p - pointer to the pool instance                                *
+* return:     0 on success, -1 on failure                                     *
+******************************************************************************/
+void check_clients(pool *p)
+{
+    int i, connfd;
+
+    for (i=0; (i<= p->maxi) && (p->nready > 0); i++)
+    {
+        connfd = p->clientfd[i];
+
+        if ((connfd > 0) && (FD_ISSET(connfd, &p->ready_set)))
+        {
+            p->nready--;
+            echo(connfd);
+        }
+    }
+}
+
+/******************************************************************************
+* subroutine: echo                                                            *
+* purpose:    return any message client send to server                        *
+* parameters: connfd - connection descriptor                                  *
+* return:     0 on success, -1 on failure                                     *
+******************************************************************************/
+int echo(int connfd)
+{
+    ssize_t readret = 0;
+    char buf[BUF_SIZE];
+
+    if ((readret = recv(connfd, buf, BUF_SIZE, 0)) > 1)
+    {
+        if (send(connfd, buf, readret, 0) != readret)
+        {
+            fprintf(stderr, "Error sending to client.\n");
+            Log("Error sending to client.");
+            return -1;
+        }
+        buf[readret-1] = '\0';
+        Log(buf);
+
+        memset(buf, 0, BUF_SIZE);
+    }
+    return 0;
+}
 
 int close_socket(int sock)
 {
@@ -143,4 +241,5 @@ int close_socket(int sock)
 void clean()
 {
     fclose(STATE.logfile);
+    close_socket(STATE.sock);
 }

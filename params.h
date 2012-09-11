@@ -8,6 +8,7 @@ struct lisod_state
 {
     FILE* logfile;
     int port;
+    int sock;
 };
 
 extern struct lisod_state STATE;
