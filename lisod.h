@@ -11,8 +11,8 @@
 
 #define BUF_SIZE 4096
 #define MAX_CONN 1024
-
 #define RIO_BUFSIZE 8192
+
 typedef struct
 {
     int rio_fd;                /* descriptor for this internal buf */
@@ -34,12 +34,14 @@ typedef struct
 } pool;
 
 
-void init();
+void init(int argc, char* argv[]);
 void clean();
+void usage_exit();
 void init_pool(int sock, pool *p);
 int add_client(int client_fd, pool *p);
+void remove_client(int client_fd, int index, pool *p);
 void check_clients(pool *p);
-int echo(int connfd);
+int echo(int connfd, int id, pool *p);
 int close_socket(int sock);
 
 #endif

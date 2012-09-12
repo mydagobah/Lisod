@@ -31,7 +31,7 @@ int main(int argc, char* argv[])
     struct sockaddr_in addr, client_addr;
     static pool pool;
 
-    init();
+    init(argc, argv);
     Log("Start Liso server");
     fprintf(stdout, "----- Echo Server -----\n");
 
@@ -40,7 +40,7 @@ int main(int argc, char* argv[])
      * SOCK_STREAM - sequenced, reliable, two-way, connection-based byte stream
      * 0 (protocol) - use default protocol
      */
-    if ((sock = socket(PF_INET, SOCK_STREAM, 0)) == -1)
+    if ((sock = socket(PF_INET, SOCK_STREAM | SOCK_NONBLOCK, SO_KEEPALIVE)) == -1)
     {
         fprintf(stderr, "Failed creating socket.\n");
         return EXIT_FAILURE;
@@ -70,7 +70,7 @@ int main(int argc, char* argv[])
 
     init_pool(sock, &pool);
 
-    /* finally, loop waiting for input and then write it back */
+    // the main loop to wait for connections and serve request
     while (1)
     {
        pool.ready_set = pool.read_set;
@@ -78,12 +78,13 @@ int main(int argc, char* argv[])
 
        if (pool.nready < 0)
        {
-           close(sock);
+           clean();
            fprintf(stderr, "Error select connections.\n");
+           Log("Error: select error");
            return EXIT_FAILURE;
        }
 
-       // if sock descriptor ready, add new client to pool
+       // if there is new connection, accept and add new client to pool
        if (FD_ISSET(sock, &pool.ready_set))
        {
            client_size = sizeof(client_addr);
@@ -111,14 +112,52 @@ int main(int argc, char* argv[])
 
 /******************************************************************************
 * subroutine: init                                                            *
-* purpose:    perform all of the initialization                               *
+* purpose:    parse arguments and perform all other initialization            *
+* parameters: argc - the number of arguments passed to main                   *
+*             argv - the array of arguments passed to main                    *
+* return:     none                                                            *
+******************************************************************************/
+void init(int argc, char* argv[])
+{
+    if (argc != 9)
+        usage_exit();
+
+    // parse arguments
+    STATE.port = (int)strtol(argv[1], (char**)NULL, 10);
+    STATE.s_port = (int)strtol(argv[2], (char**)NULL, 10);
+    strcpy(STATE.log_path, argv[3]);
+    strcpy(STATE.lck_path, argv[4]);
+    strcpy(STATE.www_path, argv[5]);
+    strcpy(STATE.cgi_path, argv[6]);
+    strcpy(STATE.key_path, argv[7]);
+    strcpy(STATE.ctf_path, argv[8]);
+
+    STATE.log = log_open(STATE.log_path);
+}
+
+/******************************************************************************
+* subroutine: usage_exit                                                      *
+* purpose:    print usage description whenever wrong arguments are passed in  *
 * parameters: none                                                            *
 * return:     none                                                            *
 ******************************************************************************/
-void init()
+void usage_exit()
 {
-    STATE.logfile = log_open();
-    STATE.port = 9999;
+    fprintf(stdout,
+            "Usage: ./lisod <HTTP port> <HTTPS port> <log file> <lock file> \n"
+            "       <www folder> <CGI folder or script name> <private key file> \n"
+            "       <certificate file> \n"
+            "Command line descriptions: \n"
+            "    HTTP port - the port for HTTP server to listen on \n"
+            "    HTTPS port - the port for HTTPS server to listen on \n"
+            "    log file   - file to send log messages to \n"
+            "    lock file  - file to lock on when becoming a daemon process \n"
+            "    www folder - folder containing a tree to serve as the root of a website \n"
+            "    CGI folder - folder containign CGI programs \n"
+            "    private key file - private key file path \n"
+            "    certificate file - certificate file path \n"
+            );
+    exit(EXIT_FAILURE);
 }
 
 /******************************************************************************
@@ -136,7 +175,7 @@ void init_pool (int sock, pool *p)
     for (i=0; i< FD_SETSIZE; i++)
         p->clientfd[i] = -1;
 
-    // Initially, sock is the only member of select read set
+    // Initially, sock is the only member of select read_set
     p->maxfd = sock;
     FD_ZERO(&p->read_set);
     FD_SET(sock, &p->read_set);
@@ -179,6 +218,13 @@ int add_client(int client_fd, pool *p)
     return 0;
 }
 
+void remove_client(int client_fd, int id, pool *p)
+{
+    FD_CLR(client_fd, &p->read_set);
+    p->clientfd[id] = -1;
+    close(client_fd);
+}
+
 /******************************************************************************
 * subroutine: check_clients                                                   *
 * purpose:    process the ready set from the set of descriptors               *
@@ -196,7 +242,7 @@ void check_clients(pool *p)
         if ((connfd > 0) && (FD_ISSET(connfd, &p->ready_set)))
         {
             p->nready--;
-            echo(connfd);
+            echo(connfd, i, p);
         }
     }
 }
@@ -207,12 +253,12 @@ void check_clients(pool *p)
 * parameters: connfd - connection descriptor                                  *
 * return:     0 on success, -1 on failure                                     *
 ******************************************************************************/
-int echo(int connfd)
+int echo(int connfd, int id, pool *p)
 {
     ssize_t readret = 0;
     char buf[BUF_SIZE];
 
-    if ((readret = recv(connfd, buf, BUF_SIZE, 0)) > 1)
+    if ((readret = recv(connfd, buf, BUF_SIZE, MSG_DONTWAIT)) > 0)
     {
         if (send(connfd, buf, readret, 0) != readret)
         {
@@ -224,6 +270,14 @@ int echo(int connfd)
         Log(buf);
 
         memset(buf, 0, BUF_SIZE);
+    }
+
+    if (readret == 0)
+        remove_client(connfd, id, p);
+    else if (readret == -1)
+    {
+        Log("Error: recv error");
+        return -1;
     }
     return 0;
 }
@@ -240,6 +294,6 @@ int close_socket(int sock)
 
 void clean()
 {
-    fclose(STATE.logfile);
+    fclose(STATE.log);
     close_socket(STATE.sock);
 }

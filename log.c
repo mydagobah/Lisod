@@ -6,11 +6,11 @@
  */
 #include "log.h"
 
-FILE *log_open()
+FILE *log_open(const char *path)
 {
     FILE *logfile;
 
-    logfile = fopen("lisod.log", "w");
+    logfile = fopen(path, "w");
     if ( logfile == NULL )
     {
         fprintf(stdout, "Error opening logfile. \n");
@@ -27,11 +27,11 @@ void Log(const char *message)
 {
     time_t ltime;
     struct tm *Tm;
-   
+
     ltime = time(NULL);
     Tm = localtime(&ltime);
 
-    fprintf(STATE.logfile, "[%04d%02d%02d %02d:%02d:%02d] %s \n",
+    fprintf(STATE.log, "[%04d%02d%02d %02d:%02d:%02d] %s \n",
                  Tm->tm_year+1900,
                  Tm->tm_mon+1,
                  Tm->tm_mday,

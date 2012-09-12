@@ -4,7 +4,7 @@
 #include <time.h>
 #include "params.h"
 
-FILE *log_open(void);
+FILE *log_open(const char *path);
 void Log(const char *message);
 
 #endif
