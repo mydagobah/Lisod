@@ -1,0 +1,18 @@
+# This file describes the tests have been done for Liso server.
+
+1. SMOKE test
+   1) Test goal: server compiles with no error and can return message from one
+   client
+   2) Test procedures:
+      a) make - to compile programs
+      b) ./lisod 8080 4443 /tmp/lisod.log /tmp/lisod.lock /tmp/www
+      /tmp/cgi/flasr.py /tmp/priv.key /tmp/cert.crt - to run up server
+      c) in another terminal window, run './echo_client localhost 8080' 
+         then type 'this is a SMOKE test' and get the same string return.
+ 
+2. Functional test
+   1) Test goal: server can accept multiple connections concurrently
+   2) Test procedures:
+      a)
+
+3. Stress test
