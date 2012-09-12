@@ -40,7 +40,7 @@ int main(int argc, char* argv[])
      * SOCK_STREAM - sequenced, reliable, two-way, connection-based byte stream
      * 0 (protocol) - use default protocol
      */
-    if ((sock = socket(PF_INET, SOCK_STREAM | SOCK_NONBLOCK, SO_KEEPALIVE)) == -1)
+    if ((sock = socket(PF_INET, SOCK_STREAM | SOCK_NONBLOCK, 0)) == -1)
     {
         fprintf(stderr, "Failed creating socket.\n");
         return EXIT_FAILURE;

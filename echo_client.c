@@ -54,7 +54,7 @@ int main(int argc, char* argv[])
 
     if (connect (sock, servinfo->ai_addr, servinfo->ai_addrlen) == -1)
     {
-        fprintf(stderr, "Connect");
+        fprintf(stderr, "Connect error \n");
         return EXIT_FAILURE;
     }
 
