@@ -1,18 +1,52 @@
+# Course: 15441 Computer Networking Fall2012
+# Student: Wenjun Zhang (wenjunzh@andrew.cmu.edu)
+#
 # This file describes the tests have been done for Liso server.
 
 1. SMOKE test
-   1) Test goal: server compiles with no error and can return message from one
-   client
+   1) Test goal: server compiles with no error and can return message from the
+      client
    2) Test procedures:
-      a) make - to compile programs
-      b) ./lisod 8080 4443 /tmp/lisod.log /tmp/lisod.lock /tmp/www
-      /tmp/cgi/flasr.py /tmp/priv.key /tmp/cert.crt - to run up server
-      c) in another terminal window, run './echo_client localhost 8080' 
-         then type 'this is a SMOKE test' and get the same string return.
- 
+      a) compile programs
+         Command: make
+      b) run server
+         Command: ./lisod 8080 4443 /tmp/lisod.log /tmp/lisod.lock /tmp/www
+                  /tmp/cgi/flaskr.py /tmp/priv.key /tmp/cert.crt 
+      c) run client
+         Command: ./echo_client localhost 8080
+         Note: if getting connect error, see Known issue #1.
+      d) test echo function
+         Command: 'this a SMOKE test'
+         and see the same string get returned.
+
 2. Functional test
    1) Test goal: server can accept multiple connections concurrently
    2) Test procedures:
-      a)
+      a) run step a), b) of SMOKE test
+      b) open three client windows, run test c) of SMOKE test
+      c) type message from each window and see return message, repeat several
+         times.
+      d) open lisod.log and check all clients are accepted and the order of
+         message is as the order when they are inputted.
 
 3. Stress test
+   1) Test goal: test the maximum connections server can handle
+   2) Test procedures:
+      a) run step a), b) of SMOKE test
+      b) run cp1.checker.py
+         Command: ./cp1_checker.py localhost 8080 5 10 4 1000
+      c) see test return 'Success!' and view lisod.log.
+
+4. Memory leak test
+   1) Test goal: to make sure there is no memory leak in the program
+   2) Run command: valgrind --tool=memcheck --leak-check=yes ./lisod 8081 4443
+   lisod.log lisod.lock www cgi priv cert
+   3) And see the test report returned by valgrind
+
+5. Known issues
+   1) localhost not working on cluster machine
+      Solution: replace 'localhost' with the IP address of the machine
+                type '/sbin/ifconfig | grep 'inet addr'' to get IP address
+   2) In stress test, if number of connections exceeds certain value, it returns
+      error 'Too many open files'. In my test, the number is 1020.
+

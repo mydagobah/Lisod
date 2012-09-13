@@ -7,7 +7,7 @@
 #                                                                              #
 ################################################################################
 CC = gcc
-CFLAGS = -Wall -Werror #-lefence
+CFLAGS = -Wall -Werror -lefence
 
 EXES = lisod echo_client
 

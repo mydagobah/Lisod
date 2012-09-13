@@ -1,4 +1,4 @@
-This file describes the design of Lisod - a concurrent server implemented during
+This file describes the design of Lisod - a concurrent server implemented in
 the course of 'Computer Networking (15441/641) Fall2012' at CMU, by Wenjun
 Zhang (wenjunzh@andrew.cmu.edu).
 
