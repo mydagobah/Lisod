@@ -11,6 +11,7 @@
 
 #define BUF_SIZE 4096
 #define MAX_CONN 1024
+#define MAX_LINE 8192
 #define RIO_BUFSIZE 8192
 
 typedef struct
@@ -33,15 +34,17 @@ typedef struct
     rio_t clientrio[FD_SETSIZE];  // Set of active read buffers
 } pool;
 
-
+/* declaration of subroutines */
 void init(int argc, char* argv[]);
-void clean();
-void usage_exit();
 void init_pool(int sock, pool *p);
-int add_client(int client_fd, pool *p);
+int  add_client(int client_fd, pool *p);
 void remove_client(int client_fd, int index, pool *p);
 void check_clients(pool *p);
-int echo(int connfd, int id, pool *p);
-int close_socket(int sock);
+void serve_error(int client_fd, char *errnum, char *shortmsg, char *longmsg);
+
+int  echo(int connfd, int id, pool *p);
+int  close_socket(int sock);
+void clean();
+void usage_exit();
 
 #endif

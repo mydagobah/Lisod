@@ -40,7 +40,7 @@ int main(int argc, char* argv[])
      * SOCK_STREAM - sequenced, reliable, two-way, connection-based byte stream
      * 0 (protocol) - use default protocol
      */
-    if ((sock = socket(PF_INET, SOCK_STREAM | SOCK_NONBLOCK, 0)) == -1)
+    if ((sock = socket(PF_INET, SOCK_STREAM, 0)) == -1)
     {
         fprintf(stderr, "Failed creating socket.\n");
         return EXIT_FAILURE;
@@ -281,6 +281,28 @@ int echo(int connfd, int id, pool *p)
     }
     return 0;
 }
+
+void serve_error(int client_fd, char *errnum, char *shortmsg, char *longmsg)
+{
+    char buf[BUF_SIZE], body[MAX_LINE];
+
+    // build HTTP response body
+    sprintf(body, "<html><title>Lisod Error</title>");
+    sprintf(body, "%s<body>\r\n", body);
+    sprintf(body, "%sError %s -- %s\r\n", body, errnum, shortmsg);
+    sprintf(body, "%s<br><p>%s</p></body>\r\n", body, longmsg);
+
+    // print HTTP response
+    ///TODO clear buffer?
+    sprintf(buf, "HTTP/1.1 %s %s\r\n", errnum, shortmsg);
+    send(client_fd, buf, strlen(buf), 0);
+    sprintf(buf, "Content-type: text/html\r\n");
+    send(client_fd, buf, strlen(buf), 0);
+    sprintf(buf, "Content-length: %d\r\n\r\n", (int)strlen(body));
+    send(client_fd, buf, strlen(buf), 0);
+    send(client_fd, body, strlen(body), 0);
+}
+
 
 int close_socket(int sock)
 {
