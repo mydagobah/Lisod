@@ -9,6 +9,8 @@
 #include <sys/socket.h>
 #include <sys/types.h>
 #include <sys/stat.h>
+#include <sys/mman.h>
+#include <fcntl.h>
 #include "log.h"
 
 typedef struct
@@ -40,6 +42,7 @@ void check_clients(pool *p);
 void process_request(int id, pool *p); 
 void serve_error(int client_fd, char *errnum, char *shortmsg, char *longmsg);
 void serve_head(int client_fd, char *filename);
+void serve_body(int client_fd, char *filename);
 void get_filetype(char *filename, char *filetype);
 int  echo(int connfd, int id, pool *p);
 int  close_socket(int sock);

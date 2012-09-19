@@ -315,9 +315,19 @@ void process_request(int id, pool *p)
     fprintf(stdout, "filename=%s \n", filename); 
     //
     // if methods not implemented, response error
-    if (!strcasecmp(method, "HEAD")) ///TODO
+    if (!strcasecmp(method, "HEAD")) 
     {
         serve_head(p->clientfd[id], filename); 
+    }
+    else if (!strcasecmp(method, "GET"))
+    {
+        serve_head(p->clientfd[id], filename); 
+        serve_body(p->clientfd[id], filename);
+    }
+    else if (!strcasecmp(method, "POST"))
+    {
+        serve_head(p->clientfd[id], filename); 
+        serve_body(p->clientfd[id], filename);
     }
     else
     {
@@ -325,8 +335,6 @@ void process_request(int id, pool *p)
                      "RFC 2068 Hypertext Transfer Protocol - HTTP/1.1 10.5.2");  
     }  
  
-
-    printf("End of processing request \n");
     Log("End of processing request.");
 }
 
@@ -356,6 +364,31 @@ void serve_head(int client_fd, char *filename)
     sprintf(buf, "%sLast-Modified: %s\r\n\r\n", buf, tbuf);
     rio_writen(client_fd, buf, strlen(buf));
 }
+
+void serve_body(int client_fd, char *filename)
+{
+    int fd, filesize;
+    char *ptr;
+    struct stat sbuf;
+
+    fd = open(filename, O_RDONLY, 0);
+    if (fd < 0)
+    {
+        Log("Error: Cann't open file");
+        return;
+    }
+    if (stat(filename, &sbuf) < 0)
+    {
+        Log("Error: Cann't stat file");
+        return;
+    }
+    filesize = sbuf.st_size;
+    ptr = mmap(0, filesize, PROT_READ, MAP_PRIVATE, fd, 0);
+    close(fd);
+    rio_writen(client_fd, ptr, filesize); 
+    munmap(ptr, filesize);
+}
+
 
 void get_filetype(char *filename, char *filetype)
 {
