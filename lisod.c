@@ -8,15 +8,15 @@
 *              University.                                                     *
 *                                                                              *
 *              The server currently support following features:                *
-*              1. echo: simply write back anything sent to it by connected     *
-*                 clients.                                                     *
+*              1. HTTP1.1: support HEAD, GET and POST                          *
 *              2. support connections from multiple clients                    *
-*              3. a default log file 'lisod.log' at the same directory         *
+*              3. log debug, info and error in the log file                    *
 *                                                                              *
 *                                                                              *
 * Authors: Wenjun Zhang <wenjunzh@andrew.cmu.edu>,                             *
 *                                                                              *
-* Usage:   ./lisod <HTTP port> <log file>                                      *
+* Usage:   ./lisod <HTTP port> <HTTPS port> <log file> <lock file> <www folder>*
+*          <CGI folder> <private key> <certificate file>                       *
 *                                                                              *
 *******************************************************************************/
 
@@ -202,6 +202,9 @@ int add_client(int client_fd, pool *p)
             // add the descriptor to the descriptor set
             FD_SET(client_fd, &p->read_set);
 
+            // add read buf
+             rio_readinitb(&p->clientrio[i], client_fd);
+
             // update max descriptor and pool highwater mark
             if (client_fd > p->maxfd)
                 p->maxfd = client_fd;
@@ -242,9 +245,284 @@ void check_clients(pool *p)
         if ((connfd > 0) && (FD_ISSET(connfd, &p->ready_set)))
         {
             p->nready--;
-            echo(connfd, i, p);
+           // echo(connfd, i, p);
+           process_request(i, p);
         }
     }
+}
+
+/******************************************************************************
+* subroutine: process_request                                                 *
+* purpose:    handle a single request and return responses                    *
+* parameters: client_fd - client descriptor                                   *
+* return:     noen                                                            *
+******************************************************************************/
+void process_request(int id, pool *p)
+{
+    char *ptr;
+    char method[MIN_LINE], version[MIN_LINE]; 
+    char buf[MAX_LINE], uri[MAX_LINE], filename[MAX_LINE], cgiargs[MAX_LINE];
+
+    Log("Start processing request.");
+    fprintf(stdout, "Start processing request, id=%d fd=%d\n", id, p->clientfd[id]);
+    // read and parse request line and headers
+
+    // read request line
+    memset(buf, 0, MAX_LINE);
+    if (rio_readlineb(&p->clientrio[id], buf, MAX_LINE) < 0)
+    {
+        Log("rio_readlineb error in process_request");
+        return;
+    }
+
+    sscanf(buf, "%s %s %s", method, uri, version);
+    fprintf(stdout, "method:%s, uri:%s, version:%s \n", method, uri, version);
+
+    // read request headers
+    rio_readlineb(&p->clientrio[id], buf, MAX_LINE);
+    while(strcmp(buf, "\r\n"))
+        rio_readlineb(&p->clientrio[id], buf, MAX_LINE);
+
+    // initialize filename path
+    memset(filename, 9, MAX_LINE);
+    strcpy(filename, STATE.www_path);
+    if (filename[strlen(filename)-1] != '/')
+        strcat(filename, "/");
+
+    // parse uri
+    if (!strstr(uri, "cgi-bin"))  // static content
+    {
+        strcat(filename, uri);
+        if (uri[strlen(uri)-1] == '/')
+        {
+            strcat(filename, "index.html");
+        }
+    }
+    else
+    {                             // dynamic content
+        ptr = index(uri, '?');
+        if (ptr)
+        {
+            strcpy(cgiargs, ptr+1);
+            *ptr = '\0'; ///TODO what is this for?
+        }
+        else
+        {        
+            strcpy(cgiargs, "");
+        }
+    }
+    //
+    fprintf(stdout, "filename=%s \n", filename); 
+    //
+    // if methods not implemented, response error
+    if (!strcasecmp(method, "HEAD")) ///TODO
+    {
+        serve_head(p->clientfd[id], filename); 
+    }
+    else
+    {
+        serve_error(p->clientfd[id], "501", "Method Unimplemented",
+                     "RFC 2068 Hypertext Transfer Protocol - HTTP/1.1 10.5.2");  
+    }  
+ 
+
+    printf("End of processing request \n");
+    Log("End of processing request.");
+}
+
+void serve_head(int client_fd, char *filename)
+{
+    struct stat sbuf;
+    struct tm tm;
+    char buf[BUF_SIZE], filetype[MIN_LINE], tbuf[MIN_LINE]; 
+    // check file existence
+    if (stat(filename, &sbuf) < 0)
+    {
+        serve_error(client_fd, "404", "Not Found",
+                    "Server couldn't find this file");
+        return;
+    }
+
+    // get time string
+    tm = *gmtime(&sbuf.st_mtime);
+    strftime(tbuf, MIN_LINE, "%a, %d %b %Y %H:%M:%S %Z", &tm);
+
+    // send response headers to client
+    get_filetype(filename, filetype);
+    sprintf(buf, "HTTP/1.1 200 OK\r\n");
+    sprintf(buf, "%sServer: Liso/1.0\r\n", buf);
+    sprintf(buf, "%sContent-Length: %ld\r\n", buf, sbuf.st_size);
+    sprintf(buf, "%sContent-Type: %s\r\n", buf, filetype);
+    sprintf(buf, "%sLast-Modified: %s\r\n\r\n", buf, tbuf);
+    rio_writen(client_fd, buf, strlen(buf));
+}
+
+void get_filetype(char *filename, char *filetype)
+{
+    if (strstr(filename, ".html"))
+        strcpy(filetype, "text/html");
+    else if (strstr(filename, ".gif"))
+        strcpy(filetype, "image/gif");
+    else if (strstr(filename, ".jpg"))
+        strcpy(filetype, "image/jpeg");
+    else
+        strcpy(filetype, "text/plain");
+}
+
+/******************************************************************************
+* subroutine: serve_error                                                     *
+* purpose:    return error message to client                                  *
+* parameters: client_fd: client descriptor                                    *
+*             errnum: error number                                            *
+*             shortmsg: short error message                                   *
+*             longmsg:  long error message                                    *
+* return:     none                                                            *
+******************************************************************************/
+void serve_error(int client_fd, char *errnum, char *shortmsg, char *longmsg)
+{
+    char buf[BUF_SIZE], body[MAX_LINE];
+    memset(buf, 0, BUF_SIZE); memset(body, 0, MAX_LINE);
+
+    // build HTTP response body
+    sprintf(body, "<html><title>Lisod Error</title>");
+    sprintf(body, "%s<body>\r\n", body);
+    sprintf(body, "%sError %s -- %s\r\n", body, errnum, shortmsg);
+    sprintf(body, "%s<br><p>%s</p></body></html>\r\n", body, longmsg);
+
+    // print HTTP response
+    sprintf(buf, "HTTP/1.1 %s %s\r\n", errnum, shortmsg);
+    //send(client_fd, buf, strlen(buf), 0);
+    rio_writen(client_fd, buf, strlen(buf));
+    memset(buf, 0, BUF_SIZE);
+    sprintf(buf, "Content-type: text/html\r\n");
+    send(client_fd, buf, strlen(buf), 0);
+    memset(buf, 0, BUF_SIZE);
+    sprintf(buf, "Content-length: %d\r\n\r\n", (int)strlen(body));
+    send(client_fd, buf, strlen(buf), 0);
+    send(client_fd, body, strlen(body), 0);
+}
+
+
+/******************************************************************************
+* subroutine: close_socket                                                    *
+* purpose:    close the given socket                                          *
+* parameters: sock - the socket descriptor                                    *
+* return:     0 on success, -1 on failure                                     *
+******************************************************************************/
+int close_socket(int sock)
+{
+    if (close(sock))
+    {
+        fprintf(stderr, "Failed closing socket.\n");
+        return -1;
+    }
+    return 0;
+}
+
+/******************************************************************************
+* subroutine: clean                                                           *
+* purpose:    cleanup allocated resources when server is shutdown             *
+* parameters: none                                                            *
+* return:     none                                                            *
+******************************************************************************/
+void clean()
+{
+    fclose(STATE.log);
+    close_socket(STATE.sock);
+}
+
+/******************************************************************************
+ *                            wrappers from csapp                             *
+ *****************************************************************************/
+
+/* 
+ * rio_read - This is a wrapper for the Unix read() function that
+ *    transfers min(n, rio_cnt) bytes from an internal buffer to a user
+ *    buffer, where n is the number of bytes requested by the user and
+ *    rio_cnt is the number of unread bytes in the internal buffer. On
+ *    entry, rio_read() refills the internal buffer via a call to
+ *    read() if the internal buffer is empty.
+ */
+static ssize_t rio_read(rio_t *rp, char *usrbuf, size_t n)
+{
+    int cnt;
+
+    while (rp->rio_cnt <= 0) {  /* refill if buf is empty */
+        rp->rio_cnt = read(rp->rio_fd, rp->rio_buf, sizeof(rp->rio_buf));
+        if (rp->rio_cnt < 0) {
+            if (errno != EINTR) /* interrupted by sig handler return */
+                return -1;
+        }
+        else if (rp->rio_cnt == 0)  /* EOF */
+            return 0;
+        else
+            rp->rio_bufptr = rp->rio_buf; /* reset buffer ptr */
+    }
+
+    /* Copy min(n, rp->rio_cnt) bytes from internal buf to user buf */
+    cnt = n;
+    if (rp->rio_cnt < n)
+        cnt = rp->rio_cnt;
+    memcpy(usrbuf, rp->rio_bufptr, cnt);
+    rp->rio_bufptr += cnt;
+    rp->rio_cnt -= cnt;
+    return cnt;
+}
+
+/*
+ * rio_readinitb - Associate a descriptor with a read buffer and reset buffer
+ */
+void rio_readinitb(rio_t *rp, int fd)
+{
+    rp->rio_fd = fd;
+    rp->rio_cnt = 0;
+    rp->rio_bufptr = rp->rio_buf;
+}
+
+/* 
+ * rio_readlineb - robustly read a text line (buffered)
+ */
+ssize_t rio_readlineb(rio_t *rp, void *usrbuf, size_t maxlen)
+{
+    int n, rc;
+    char c, *bufp = usrbuf;
+
+    for (n = 1; n < maxlen; n++) {
+        if ((rc = rio_read(rp, &c, 1)) == 1) {
+            *bufp++ = c;
+            if (c == '\n')
+                break;
+        } else if (rc == 0) {
+            if (n == 1)
+                return 0; /* EOF, no data read */
+            else
+                break;    /* EOF, some data was read */
+        } else
+            return -1;    /* error */
+    }
+    *bufp = 0;
+    return n;
+}
+/*
+ * rio_writen - robustly write n bytes (unbuffered)
+ */
+ssize_t rio_writen(int fd, void *usrbuf, size_t n) 
+{
+    size_t nleft = n;
+    ssize_t nwritten;
+    char *bufp = usrbuf;
+
+    while (nleft > 0) {
+	if ((nwritten = write(fd, bufp, nleft)) <= 0) {
+	    if (errno == EINTR)  /* interrupted by sig handler return */
+		nwritten = 0;    /* and call write() again */
+	    else
+		return -1;       /* errorno set by write() */
+	}
+	nleft -= nwritten;
+	bufp += nwritten;
+    }
+    return n;
 }
 
 /******************************************************************************
@@ -280,42 +558,4 @@ int echo(int connfd, int id, pool *p)
         return -1;
     }
     return 0;
-}
-
-void serve_error(int client_fd, char *errnum, char *shortmsg, char *longmsg)
-{
-    char buf[BUF_SIZE], body[MAX_LINE];
-
-    // build HTTP response body
-    sprintf(body, "<html><title>Lisod Error</title>");
-    sprintf(body, "%s<body>\r\n", body);
-    sprintf(body, "%sError %s -- %s\r\n", body, errnum, shortmsg);
-    sprintf(body, "%s<br><p>%s</p></body>\r\n", body, longmsg);
-
-    // print HTTP response
-    ///TODO clear buffer?
-    sprintf(buf, "HTTP/1.1 %s %s\r\n", errnum, shortmsg);
-    send(client_fd, buf, strlen(buf), 0);
-    sprintf(buf, "Content-type: text/html\r\n");
-    send(client_fd, buf, strlen(buf), 0);
-    sprintf(buf, "Content-length: %d\r\n\r\n", (int)strlen(body));
-    send(client_fd, buf, strlen(buf), 0);
-    send(client_fd, body, strlen(body), 0);
-}
-
-
-int close_socket(int sock)
-{
-    if (close(sock))
-    {
-        fprintf(stderr, "Failed closing socket.\n");
-        return 1;
-    }
-    return 0;
-}
-
-void clean()
-{
-    fclose(STATE.log);
-    close_socket(STATE.sock);
 }

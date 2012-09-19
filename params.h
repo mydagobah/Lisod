@@ -4,20 +4,25 @@
 #include <stdio.h>
 #include <stdlib.h>
 
-#define MAX_NAME_LEN 255
-#define MAX_PATH_LEN 4096
+#define MIN_LINE 64
+#define MAX_NAME 256
+#define MAX_CONN 1024
+#define BUF_SIZE 4096
+#define MAX_PATH 4096
+#define MAX_LINE 8192
+
 struct lisod_state
 {
+    FILE* log;
     int  port;
     int  s_port;
-    char log_path[MAX_PATH_LEN];
-    char lck_path[MAX_PATH_LEN];
-    char www_path[MAX_PATH_LEN];
-    char cgi_path[MAX_PATH_LEN];
-    char key_path[MAX_PATH_LEN];
-    char ctf_path[MAX_PATH_LEN];
     int  sock;
-    FILE* log;
+    char log_path[MAX_PATH];
+    char lck_path[MAX_PATH];
+    char www_path[MAX_PATH];
+    char cgi_path[MAX_PATH];
+    char key_path[MAX_PATH];
+    char ctf_path[MAX_PATH];
 };
 
 extern struct lisod_state STATE;
