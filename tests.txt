@@ -3,6 +3,8 @@
 #
 # This file describes the tests have been done for Liso server.
 
+***** Check point 1 - concurrent echo server *****
+
 1. SMOKE test
    1) Test goal: server compiles with no error and can return message from the
       client
@@ -49,4 +51,36 @@
                 type '/sbin/ifconfig | grep 'inet addr'' to get IP address
    2) In stress test, if number of connections exceeds certain value, it returns
       error 'Too many open files'. In my test, the number is 1020.
+
+
+***** Check point 2 - HTTP 1.1 HEAD GET POST *****
+
+In this part, most tests were done via telnet and web browser.
+
+After start running the server (same as cp1),
+
+1. Telnet in terminal
+   1) Test goal: test the server can return proper response
+   2) Test procedures:
+      a) connect server 
+         Command: telnet 128.2.13.134 8080 # sample ip address
+      b) send requests
+         Command: GET / HTTP/1.1    # return 200 OK and index.html
+         Command: HEAD / HTTP/1.1   # return 200 OK proper header info
+         Command: GET / HTTP/1.0    # return 505 HTTP Version Not Supported
+         Command: DELET / HTTP/1.1  # return 501 Not Implemented
+         Command: POST / HTTP/1.1   # return 411 Length Required 
+         Command: GET /foo HTTP/1.1 # return 404 Not Found
+         Command: POST /blog HTTP/1.1   
+                  Content-Length: 5 # return 204 No Content 
+         Command: Not validcommand  # return 400 Bad Request
+         
+         etc...
+ 
+2. Web browser
+   1) Test goal: test the server can serve static web site
+   2) Test procedures:
+      a) open browser, type '128.2.13.134:8080', hit 'Enter'
+         see it shows the index page
+
 

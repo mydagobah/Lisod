@@ -1,3 +1,5 @@
+***** Check point 1 - concurrent echo server *****
+
 1. Run server: ./lisod 8081 4443 lisod.log lisod.lock www cgi priv cert
 2. Run echo_clients: ./echo_client <ip of the server> 8081
 3. echo_client inputs
@@ -16,3 +18,17 @@
 4. memory leak test: valgrind --tool=memcheck --leak-check=yes ./lisod 8081 4443
 lisod.log lisod.lock www cgi priv cert
 
+***** Check point 2 - HTTP 1.1 HEAD GET POST *****
+
+1. Run server: ./lisod 8080 4443 lisod.log lisod.lock static_site cgi priv cert
+2. Open terminal, type following test commands:
+   
+      Command: GET / HTTP/1.1    
+      Command: HEAD / HTTP/1.1  
+      Command: GET / HTTP/1.0  
+      Command: DELET / HTTP/1.1  
+      Command: POST / HTTP/1.1   
+      Command: GET /foo HTTP/1.1 
+      Command: POST /blog HTTP/1.1   
+               Content-Length: 5 
+      Command: Not validrequest  
