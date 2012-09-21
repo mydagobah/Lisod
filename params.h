@@ -14,6 +14,7 @@
 struct lisod_state
 {
     FILE* log;
+    int  is_full;
     int  port;
     int  s_port;
     int  sock;

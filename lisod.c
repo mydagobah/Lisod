@@ -9,14 +9,14 @@
 *                                                                              *
 *              The server currently support following features:                *
 *              1. HTTP1.1: support HEAD, GET and POST                          *
-*              2. support connections from multiple clients                    *
-*              3. log debug, info and error in the log file                    *
+*              2. Support connections from multiple clients                    *
+*              3. Log debug, info and error in the log file                    *
 *                                                                              *
 *                                                                              *
-* Authors: Wenjun Zhang <wenjunzh@andrew.cmu.edu>,                             *
+* Authors:     Wenjun Zhang <wenjunzh@andrew.cmu.edu>,                         *
 *                                                                              *
-* Usage:   ./lisod <HTTP port> <HTTPS port> <log file> <lock file> <www folder>*
-*          <CGI folder> <private key> <certificate file>                       *
+* Usage:       ./lisod <HTTP port> <HTTPS port> <log file> <lock file>         *
+*              <www folder> <CGI folder> <private key> <certificate file>      *
 *                                                                              *
 *******************************************************************************/
 
@@ -26,14 +26,15 @@ struct lisod_state STATE;
 
 int main(int argc, char* argv[])
 {
-    int sock, client_sock;
+    int sock, client_fd;
     socklen_t client_size;
     struct sockaddr_in addr, client_addr;
+    struct timeval tv;
     static pool pool;
 
     init(argc, argv);
+
     Log("Start Liso server");
-    fprintf(stdout, "----- Echo Server -----\n");
 
     /* all networked programs must create a socket
      * PF_INET - IPv4 Internet protocols
@@ -42,11 +43,13 @@ int main(int argc, char* argv[])
      */
     if ((sock = socket(PF_INET, SOCK_STREAM, 0)) == -1)
     {
-        fprintf(stderr, "Failed creating socket.\n");
+        Log("Error: failed creating socket.\n");
+        fclose(STATE.log);
         return EXIT_FAILURE;
     }
+
     STATE.sock = sock;
-    Log("socket success!");
+    Log("Create socket success!");
 
     addr.sin_family = AF_INET;
     addr.sin_port = htons(STATE.port);
@@ -54,59 +57,76 @@ int main(int argc, char* argv[])
     /* servers bind sockets to ports---notify the OS they accept connections */
     if (bind(sock, (struct sockaddr *) &addr, sizeof(addr)))
     {
-        close_socket(sock);
-        fprintf(stderr, "Failed binding socket.\n");
+        Log("Error: failed binding socket.\n");
+        clean();
         return EXIT_FAILURE;
     }
     Log("bind success!");
 
     if (listen(sock, MAX_CONN))
     {
-        close_socket(sock);
-        fprintf(stderr, "Error listening on socket.\n");
+        Log("Error: listening on socket.\n");
+        clean();
         return EXIT_FAILURE;
     }
-    Log("listen success!");
+    Log("listen success! >>>>>>>>>>>>>>>>>>>>");
 
     init_pool(sock, &pool);
 
-    // the main loop to wait for connections and serve request
+    // the main loop to wait for connections and serve requests
     while (1)
     {
+       tv.tv_sec = 1; // timeout = 1 sec
+       tv.tv_usec = 0;
        pool.ready_set = pool.read_set;
-       pool.nready = select(pool.maxfd+1, &pool.ready_set, NULL, NULL, NULL);
+       pool.nready = select(pool.maxfd+1, &pool.ready_set, NULL, NULL, &tv);
 
        if (pool.nready < 0)
        {
-           clean();
-           fprintf(stderr, "Error select connections.\n");
+           if (errno == EINTR)
+           {
+               Log("Server is shut down.");
+               clean();
+               break;
+           }
+          
            Log("Error: select error");
-           return EXIT_FAILURE;
+           continue;
        }
 
-       // if there is new connection, accept and add new client to pool
+       // if there is new connection, accept and add the new client to pool
        if (FD_ISSET(sock, &pool.ready_set))
        {
            client_size = sizeof(client_addr);
-           client_sock = accept(sock, (struct sockaddr *) &client_addr,
-                                &client_size);
+           client_fd = accept(sock, (struct sockaddr *) &client_addr,
+                              &client_size);
 
-           if (client_sock == -1)
+           if (client_fd < 0) ///TODO
            {
-               clean();
-               fprintf(stderr, "Error accepting connection. \n");
-               return EXIT_FAILURE;
+               Log("Error: accepting connection. \n");
+               continue;
            }
+
            Log("accept client");
 
-           add_client(client_sock, &pool);
+           if (STATE.is_full)
+           {
+               pool.nready--;
+               serve_error(client_fd, "503", "Service Unavailable",
+                    "Server is too busy right now. Please try again later.", 1);
+               close(client_fd);
+           }
+           else
+              add_client(client_fd, &pool);
        }
 
        // process each ready connected descriptor
        check_clients(&pool);
     }
 
+    Log("cleaning up.......");
     clean();
+    Log("Done!");
     return EXIT_SUCCESS;
 }
 
@@ -119,8 +139,7 @@ int main(int argc, char* argv[])
 ******************************************************************************/
 void init(int argc, char* argv[])
 {
-    if (argc != 9)
-        usage_exit();
+    if (argc != 9)  usage_exit();
 
     // parse arguments
     STATE.port = (int)strtol(argv[1], (char**)NULL, 10);
@@ -131,6 +150,9 @@ void init(int argc, char* argv[])
     strcpy(STATE.cgi_path, argv[6]);
     strcpy(STATE.key_path, argv[7]);
     strcpy(STATE.ctf_path, argv[8]);
+
+    if (STATE.www_path[strlen(STATE.www_path)-1] == '/')
+         STATE.www_path[strlen(STATE.www_path)-1] = '\0';
 
     STATE.log = log_open(STATE.log_path);
 }
@@ -179,6 +201,7 @@ void init_pool (int sock, pool *p)
     p->maxfd = sock;
     FD_ZERO(&p->read_set);
     FD_SET(sock, &p->read_set);
+    STATE.is_full = 0;
 }
 
 /******************************************************************************
@@ -192,7 +215,11 @@ int add_client(int client_fd, pool *p)
 {
     int i;
     p->nready--;
-    for (i=0; i<FD_SETSIZE; i++)
+
+    if (STATE.is_full) return -1;
+ 
+    // only accept FD_SETSIZE - 5 clients to keep server from overloading
+    for (i=0; i<(FD_SETSIZE - 5); i++)
     {
         if (p->clientfd[i] < 0)
         {
@@ -213,19 +240,29 @@ int add_client(int client_fd, pool *p)
             break;
         }
     }
-    if (i == FD_SETSIZE)
-    {
-        Log ("add_client error: too many clients");
+    
+    if (i == (FD_SETSIZE - 5))
+    {   
+        STATE.is_full = 1;
+        Log ("Error: too many clients.");
         return -1;
     }
     return 0;
 }
 
-void remove_client(int client_fd, int id, pool *p)
+/******************************************************************************
+* subroutine: remove_client                                                   *
+* purpose:    remove a client from the pool after close a connection          *
+* parameters: id - the index number of the client in the pool                 *
+*             p - pointer to the pool instance                                *
+* return:     none                       `                                    *
+******************************************************************************/
+void remove_client(int id, pool *p)
 {
-    FD_CLR(client_fd, &p->read_set);
+    FD_CLR(p->clientfd[id], &p->read_set);
+    if (close(p->clientfd[id]) < 0) Log("Error: close client fd error");
     p->clientfd[id] = -1;
-    close(client_fd);
+    STATE.is_full = 0;
 }
 
 /******************************************************************************
@@ -236,17 +273,18 @@ void remove_client(int client_fd, int id, pool *p)
 ******************************************************************************/
 void check_clients(pool *p)
 {
-    int i, connfd;
+    int i, connfd, is_closed;
 
-    for (i=0; (i<= p->maxi) && (p->nready > 0); i++)
+    for (i=0; (i <= p->maxi) && (p->nready > 0); i++)
     {
         connfd = p->clientfd[i];
 
         if ((connfd > 0) && (FD_ISSET(connfd, &p->ready_set)))
         {
             p->nready--;
-           // echo(connfd, i, p);
-           process_request(i, p);
+            is_closed = 0;
+            process_request(i, p, &is_closed);
+            if (is_closed) remove_client(i, p);
         }
     }
 }
@@ -254,146 +292,375 @@ void check_clients(pool *p)
 /******************************************************************************
 * subroutine: process_request                                                 *
 * purpose:    handle a single request and return responses                    *
-* parameters: client_fd - client descriptor                                   *
-* return:     noen                                                            *
+* parameters: id        - the index of the client in the pool                 *
+*             p         - a pointer of pool struct                            *
+*             is_closed - idicator if the transaction is closed               *
+* return:     none                                                            *
 ******************************************************************************/
-void process_request(int id, pool *p)
+void process_request(int id, pool *p, int *is_closed)
 {
-    char *ptr;
-    char method[MIN_LINE], version[MIN_LINE]; 
-    char buf[MAX_LINE], uri[MAX_LINE], filename[MAX_LINE], cgiargs[MAX_LINE];
+    HTTPContext *context = (HTTPContext *)calloc(1, sizeof(HTTPContext));
 
     Log("Start processing request.");
-    fprintf(stdout, "Start processing request, id=%d fd=%d\n", id, p->clientfd[id]);
-    // read and parse request line and headers
 
-    // read request line
-    memset(buf, 0, MAX_LINE);
-    if (rio_readlineb(&p->clientrio[id], buf, MAX_LINE) < 0)
+    // parse request line (get method, uri, version)
+    if (parse_requestline(id, p, context, is_closed) < 0) goto Done;
+
+    // check HTTP method (support GET, POST, HEAD now)
+    if (strcasecmp(context->method, "GET")  && 
+        strcasecmp(context->method, "HEAD") && 
+        strcasecmp(context->method, "POST"))
     {
-        Log("rio_readlineb error in process_request");
-        return;
+        *is_closed = 1;
+        serve_error(p->clientfd[id], "501", "Not Implemented",
+                   "The method is not valid or not implemented by the server",
+                    *is_closed); 
+        goto Done;
     }
 
-    sscanf(buf, "%s %s %s", method, uri, version);
-    fprintf(stdout, "method:%s, uri:%s, version:%s \n", method, uri, version);
+    // check HTTP version
+    if (strcasecmp(context->version, "HTTP/1.1"))
+    {
+        *is_closed = 1;
+        serve_error(p->clientfd[id], "505", "HTTP Version not supported",
+                    "HTTP/1.0 is not supported by Liso server", *is_closed);  
+        goto Done;
+    }
 
-    // read request headers
-    rio_readlineb(&p->clientrio[id], buf, MAX_LINE);
-    while(strcmp(buf, "\r\n"))
-        rio_readlineb(&p->clientrio[id], buf, MAX_LINE);
+    // parse uri (get filename and parameters if any)
+    parse_uri(context);
+   
+    // parse request headers 
+    if (parse_requestheaders(id, p, context, is_closed) < 0) goto Done;
 
+    // for POST, parse request body
+    if (!strcasecmp(context->method, "POST"))
+        if (parse_requestbody(id, p, context, is_closed) < 0) goto Done;
+
+    // send response 
+    if (!strcasecmp(context->method, "GET"))
+        serve_get(p->clientfd[id], context, is_closed); 
+    else if (!strcasecmp(context->method, "POST")) 
+        serve_post(p->clientfd[id], context, is_closed);
+    else if (!strcasecmp(context->method, "HEAD")) 
+        serve_head(p->clientfd[id], context, is_closed);
+
+    Done:
+    free(context); 
+    Log("End of processing request.");
+}
+
+/******************************************************************************
+* subroutine: parse_requestline                                               *
+* purpose:    parse the content of request line                               *
+* parameters: id        - the index of the client in the pool                 *
+*             p         - a pointer of the pool data structure                *
+*             context   - a pointer refers to HTTP context                    *
+*             is_closed - an indicator if the current transaction is closed   *
+* return:     0 on success -1 on error                                        *
+******************************************************************************/
+int parse_requestline(int id, pool *p, HTTPContext *context, int *is_closed)
+{
+    char buf[MAX_LINE];
+
+    memset(buf, 0, MAX_LINE); 
+
+    if (rio_readlineb(&p->clientrio[id], buf, MAX_LINE) < 0)
+    {
+        *is_closed = 1;
+        Log("Error: rio_readlineb error in process_request");
+        serve_error(p->clientfd[id], "500", "Internal Server Error",
+                    "The server encountered an unexpected condition.", *is_closed);
+        return -1;
+    }
+
+    if (sscanf(buf, "%s %s %s", context->method, context->uri, context->version) < 3)
+    {
+        *is_closed = 1;
+        Log("Info: Invalid request line");
+        serve_error(p->clientfd[id], "400", "Bad Request",
+                    "The request is not understood by the server", *is_closed);
+        return -1;
+    }
+
+    return 0;
+}
+
+/******************************************************************************
+* subroutine: parse_requestheaders                                            *
+* purpose:    parse the content of request headers                            *
+* parameters: id        - the index of the client in the pool                 *
+*             p         - a pointer of the pool data structure                *
+*             context   - a pointer refers to HTTP context                    *
+*             is_closed - an indicator if the current transaction is closed   *
+* return:     0 on success -1 on error                                        *
+******************************************************************************/
+int parse_requestheaders(int id, pool *p, HTTPContext *context, int *is_closed)
+{
+    int  ret, cnt = 0, has_contentlen = 0;
+    char buf[MAX_LINE], header[MIN_LINE], data[MIN_LINE];
+    
+    context->content_len = -1; 
+
+    do
+    {   
+        if ((ret = rio_readlineb(&p->clientrio[id], buf, MAX_LINE)) < 0)
+            break;
+
+        cnt += ret;
+
+        // if request header is larger than 8196, reject request
+        if (cnt > MAX_LINE)
+        {
+            *is_closed = 1;
+            serve_error(p->clientfd[id], "400", "Bad Request",
+                       "Request header too long.", *is_closed);
+            return -1;
+        }
+        
+        if (strstr(buf, "Connection: close")) *is_closed = 1;
+
+        if (strstr(buf, "Content-Length")) 
+        {
+            has_contentlen = 1;
+            if (sscanf(buf, "%s %s", header, data) > 0)
+                context->content_len = (int)strtol(data, (char**)NULL, 10); 
+            Log(data);
+        }  
+
+    } while(strcmp(buf, "\r\n"));
+
+    if ((!has_contentlen) && (!strcasecmp(context->method, "POST")))
+    {
+        serve_error(p->clientfd[id], "411", "Length Required",
+                       "Content-Length is required.", *is_closed);
+        return -1;
+    }
+
+    return 0;
+}
+
+/******************************************************************************
+* subroutine: parse_requestbody                                               *
+* purpose:    parse the content of request body (for POST)                    *
+* parameters: id        - the index of the client in the pool                 *
+*             p         - a pointer of the pool data structure                *
+*             context   - a pointer refers to HTTP context                    *
+*             is_closed - an indicator if the current transaction is closed   *
+* return:     0 on success -1 on error                                        *
+******************************************************************************/
+int parse_requestbody(int id, pool *p, HTTPContext *context, int *is_closed)
+{
+    ///TODO
+    return 0;
+}
+/******************************************************************************
+* subroutine: parse_uri                                                       *
+* purpose:    to parse filename and CGI arguments from uri                    *
+* parameters: context - a pointer of the HTTP context data structure          *
+* return:     none                                                            *
+******************************************************************************/
+void parse_uri(HTTPContext *context)
+{
+    char *ptr;
+
+    ///TODO check HTTP://
     // initialize filename path
-    memset(filename, 9, MAX_LINE);
-    strcpy(filename, STATE.www_path);
-    if (filename[strlen(filename)-1] != '/')
-        strcat(filename, "/");
+    strcpy(context->filename, STATE.www_path);
 
     // parse uri
-    if (!strstr(uri, "cgi-bin"))  // static content
+    if (!strstr(context->uri, "cgi-bin"))  // static content
     {
-        strcat(filename, uri);
-        if (uri[strlen(uri)-1] == '/')
-        {
-            strcat(filename, "index.html");
-        }
+        context->is_static = 1;
+        strcat(context->filename, context->uri);
+        if (context->uri[strlen(context->uri)-1] == '/')
+            strcat(context->filename, "index.html");
     }
     else
     {                             // dynamic content
-        ptr = index(uri, '?');
+        ptr = index(context->uri, '?');
         if (ptr)
         {
-            strcpy(cgiargs, ptr+1);
+            strcpy(context->cgiargs, ptr+1);
             *ptr = '\0'; ///TODO what is this for?
         }
         else
         {        
-            strcpy(cgiargs, "");
+            strcpy(context->cgiargs, "");
         }
     }
-    //
-    fprintf(stdout, "filename=%s \n", filename); 
-    //
-    // if methods not implemented, response error
-    if (!strcasecmp(method, "HEAD")) 
-    {
-        serve_head(p->clientfd[id], filename); 
-    }
-    else if (!strcasecmp(method, "GET"))
-    {
-        serve_head(p->clientfd[id], filename); 
-        serve_body(p->clientfd[id], filename);
-    }
-    else if (!strcasecmp(method, "POST"))
-    {
-        serve_head(p->clientfd[id], filename); 
-        serve_body(p->clientfd[id], filename);
-    }
-    else
-    {
-        serve_error(p->clientfd[id], "501", "Method Unimplemented",
-                     "RFC 2068 Hypertext Transfer Protocol - HTTP/1.1 10.5.2");  
-    }  
- 
-    Log("End of processing request.");
 }
 
-void serve_head(int client_fd, char *filename)
+/******************************************************************************
+* subroutine: validate_file                                                   *
+* purpose:    validate file existence and permisson                           *
+* parameters: client_fd - client descriptor                                   *
+*             context   - a pointer refers to HTTP context                    *
+*             is_closed - an indicator if the current transaction is closed   *
+* return:     0 on success -1 on error                                        *
+******************************************************************************/
+int validate_file(int client_fd, HTTPContext *context, int *is_closed)
 {
     struct stat sbuf;
-    struct tm tm;
-    char buf[BUF_SIZE], filetype[MIN_LINE], tbuf[MIN_LINE]; 
+
     // check file existence
-    if (stat(filename, &sbuf) < 0)
+    if (stat(context->filename, &sbuf) < 0)
     {
         serve_error(client_fd, "404", "Not Found",
-                    "Server couldn't find this file");
-        return;
+                    "Server couldn't find this file", *is_closed);
+        return -1;
     }
+
+    // check file permission
+    if ((!S_ISREG(sbuf.st_mode)) || !(S_IRUSR & sbuf.st_mode))
+    {
+        serve_error(client_fd, "403", "Forbidden",
+                    "Server couldn't read this file", *is_closed);
+        return -1;
+    }
+
+    return 0;
+}
+
+/******************************************************************************
+* subroutine: serve_head                                                      *
+* purpose:    return response header to client                                *
+* parameters: client_fd - client descriptor                                   *
+*             context   - a pointer refers to HTTP context                    *
+*             is_closed - an indicator if the current transaction is closed   *
+* return:     none                                                            *
+******************************************************************************/
+void serve_head(int client_fd, HTTPContext *context, int *is_closed)
+{
+    struct tm tm;
+    struct stat sbuf;
+    time_t now;
+    char   buf[BUF_SIZE], filetype[MIN_LINE], tbuf[MIN_LINE], dbuf[MIN_LINE]; 
+
+    if (validate_file(client_fd, context, is_closed) < 0) return;
+
+    stat(context->filename, &sbuf);
+    get_filetype(context->filename, filetype);
 
     // get time string
     tm = *gmtime(&sbuf.st_mtime);
     strftime(tbuf, MIN_LINE, "%a, %d %b %Y %H:%M:%S %Z", &tm);
+    now = time(0);
+    tm = *gmtime(&now);
+    strftime(dbuf, MIN_LINE, "%a, %d %b %Y %H:%M:%S %Z", &tm);
 
     // send response headers to client
-    get_filetype(filename, filetype);
     sprintf(buf, "HTTP/1.1 200 OK\r\n");
+    sprintf(buf, "%sDate: %s\r\n", buf, dbuf);
     sprintf(buf, "%sServer: Liso/1.0\r\n", buf);
+    if (is_closed) sprintf(buf, "%sConnection: close\r\n", buf);
     sprintf(buf, "%sContent-Length: %ld\r\n", buf, sbuf.st_size);
     sprintf(buf, "%sContent-Type: %s\r\n", buf, filetype);
     sprintf(buf, "%sLast-Modified: %s\r\n\r\n", buf, tbuf);
-    rio_writen(client_fd, buf, strlen(buf));
+    send(client_fd, buf, strlen(buf), 0);
 }
 
-void serve_body(int client_fd, char *filename)
+/******************************************************************************
+* subroutine: serve_body                                                      *
+* purpose:    return response body to client                                  *
+* parameters: client_fd - client descriptor                                   *
+*             context   - a pointer refers to HTTP context                    *
+*             is_closed - an indicator if the current transaction is closed   *
+* return:     none                                                            *
+******************************************************************************/
+int serve_body(int client_fd, HTTPContext *context, int *is_closed)
 {
     int fd, filesize;
     char *ptr;
     struct stat sbuf;
-
-    fd = open(filename, O_RDONLY, 0);
-    if (fd < 0)
+    
+    if ((fd = open(context->filename, O_RDONLY, 0)) < 0)
     {
         Log("Error: Cann't open file");
-        return;
+        return -1; ///TODO what error code here should be?
     }
-    if (stat(filename, &sbuf) < 0)
-    {
-        Log("Error: Cann't stat file");
-        return;
-    }
+
+    stat(context->filename, &sbuf);
+
     filesize = sbuf.st_size;
     ptr = mmap(0, filesize, PROT_READ, MAP_PRIVATE, fd, 0);
     close(fd);
-    rio_writen(client_fd, ptr, filesize); 
+    send(client_fd, ptr, filesize, 0); 
     munmap(ptr, filesize);
+
+    return 0;
 }
 
+/******************************************************************************
+* subroutine: serve_get                                                       *
+* purpose:    return response for GET request                                 *
+* parameters: client_fd - client descriptor                                   *
+*             context   - a pointer refers to HTTP context                    *
+*             is_closed - an indicator if the current transaction is closed   *
+* return:     none                                                            *
+******************************************************************************/
+void serve_get(int client_fd, HTTPContext *context, int *is_closed)
+{
 
+    serve_head(client_fd, context, is_closed);
+    serve_body(client_fd, context, is_closed);
+
+}
+
+/******************************************************************************
+* subroutine: serve_post                                                      *
+* purpose:    return response for POST request                                *
+* parameters: client_fd - client descriptor                                   *
+*             context   - a pointer refers to HTTP context                    *
+*             is_closed - an indicator if the current transaction is closed   *
+* return:     none                                                            *
+******************************************************************************/
+void serve_post(int client_fd, HTTPContext *context, int *is_closed)
+{
+    struct tm tm;
+    struct stat sbuf;
+    time_t now;
+    char   buf[BUF_SIZE], dbuf[MIN_LINE]; 
+
+    // check file existence
+    if (stat(context->filename, &sbuf) == 0)
+    {
+        serve_get(client_fd, context, is_closed);
+        return;
+    }
+
+    // get time string
+    now = time(0);
+    tm = *gmtime(&now);
+    strftime(dbuf, MIN_LINE, "%a, %d %b %Y %H:%M:%S %Z", &tm);
+
+    // send response headers to client
+    sprintf(buf, "HTTP/1.1 204 No Content\r\n");
+    sprintf(buf, "%sDate: %s\r\n", buf, dbuf);
+    sprintf(buf, "%sServer: Liso/1.0\r\n", buf);
+    if (is_closed) sprintf(buf, "%sConnection: close\r\n", buf);
+    sprintf(buf, "%sContent-Length: 0\r\n", buf);
+    sprintf(buf, "%sContent-Type: text/html\r\n", buf);
+    send(client_fd, buf, strlen(buf), 0);
+}
+
+/******************************************************************************
+* subroutine: get_filetype                                                    *
+* purpose:    find filetype by filename extension                             *
+* parameters: filename: the requested filename                               *
+*             filetype: a pointer to return filetype result                   *
+* return:     none                                                            *
+******************************************************************************/
 void get_filetype(char *filename, char *filetype)
 {
     if (strstr(filename, ".html"))
         strcpy(filetype, "text/html");
+    else if (strstr(filename, ".css"))
+        strcpy(filetype, "text/css");
+    else if (strstr(filename, ".js"))
+        strcpy(filetype, "application/javascript");
+    else if (strstr(filename, ".png"))
+        strcpy(filetype, "image/png");
     else if (strstr(filename, ".gif"))
         strcpy(filetype, "image/gif");
     else if (strstr(filename, ".jpg"))
@@ -409,12 +676,18 @@ void get_filetype(char *filename, char *filetype)
 *             errnum: error number                                            *
 *             shortmsg: short error message                                   *
 *             longmsg:  long error message                                    *
+*             is_closed - an indicate if sending 'Connection: close' back     *
 * return:     none                                                            *
 ******************************************************************************/
-void serve_error(int client_fd, char *errnum, char *shortmsg, char *longmsg)
-{
-    char buf[BUF_SIZE], body[MAX_LINE];
-    memset(buf, 0, BUF_SIZE); memset(body, 0, MAX_LINE);
+void serve_error(int client_fd, char *errnum, char *shortmsg, char *longmsg, 
+                 int is_closed) {
+    struct tm tm;
+    time_t now;
+    char buf[MAX_LINE], body[MAX_LINE], dbuf[MIN_LINE];
+
+    now = time(0);
+    tm = *gmtime(&now);
+    strftime(dbuf, MIN_LINE, "%a, %d %b %Y %H:%M:%S %Z", &tm);
 
     // build HTTP response body
     sprintf(body, "<html><title>Lisod Error</title>");
@@ -424,17 +697,14 @@ void serve_error(int client_fd, char *errnum, char *shortmsg, char *longmsg)
 
     // print HTTP response
     sprintf(buf, "HTTP/1.1 %s %s\r\n", errnum, shortmsg);
-    //send(client_fd, buf, strlen(buf), 0);
-    rio_writen(client_fd, buf, strlen(buf));
-    memset(buf, 0, BUF_SIZE);
-    sprintf(buf, "Content-type: text/html\r\n");
-    send(client_fd, buf, strlen(buf), 0);
-    memset(buf, 0, BUF_SIZE);
-    sprintf(buf, "Content-length: %d\r\n\r\n", (int)strlen(body));
+    sprintf(buf, "%sDate: %s\r\n", buf, dbuf);
+    sprintf(buf, "%sServer: Liso/1.0\r\n", buf);
+    if (is_closed) sprintf(buf, "%sConnection: close\r\n", buf);
+    sprintf(buf, "%sContent-type: text/html\r\n", buf);
+    sprintf(buf, "%sContent-length: %d\r\n\r\n", buf, (int)strlen(body));
     send(client_fd, buf, strlen(buf), 0);
     send(client_fd, body, strlen(body), 0);
 }
-
 
 /******************************************************************************
 * subroutine: close_socket                                                    *
@@ -446,7 +716,7 @@ int close_socket(int sock)
 {
     if (close(sock))
     {
-        fprintf(stderr, "Failed closing socket.\n");
+        Log("Error: failed closing socket.");
         return -1;
     }
     return 0;
@@ -535,60 +805,4 @@ ssize_t rio_readlineb(rio_t *rp, void *usrbuf, size_t maxlen)
     }
     *bufp = 0;
     return n;
-}
-/*
- * rio_writen - robustly write n bytes (unbuffered)
- */
-ssize_t rio_writen(int fd, void *usrbuf, size_t n) 
-{
-    size_t nleft = n;
-    ssize_t nwritten;
-    char *bufp = usrbuf;
-
-    while (nleft > 0) {
-	if ((nwritten = write(fd, bufp, nleft)) <= 0) {
-	    if (errno == EINTR)  /* interrupted by sig handler return */
-		nwritten = 0;    /* and call write() again */
-	    else
-		return -1;       /* errorno set by write() */
-	}
-	nleft -= nwritten;
-	bufp += nwritten;
-    }
-    return n;
-}
-
-/******************************************************************************
-* subroutine: echo                                                            *
-* purpose:    return any message client send to server                        *
-* parameters: connfd - connection descriptor                                  *
-* return:     0 on success, -1 on failure                                     *
-******************************************************************************/
-int echo(int connfd, int id, pool *p)
-{
-    ssize_t readret = 0;
-    char buf[BUF_SIZE];
-
-    if ((readret = recv(connfd, buf, BUF_SIZE, MSG_DONTWAIT)) > 0)
-    {
-        if (send(connfd, buf, readret, 0) != readret)
-        {
-            fprintf(stderr, "Error sending to client.\n");
-            Log("Error sending to client.");
-            return -1;
-        }
-        buf[readret-1] = '\0';
-        Log(buf);
-
-        memset(buf, 0, BUF_SIZE);
-    }
-
-    if (readret == 0)
-        remove_client(connfd, id, p);
-    else if (readret == -1)
-    {
-        Log("Error: recv error");
-        return -1;
-    }
-    return 0;
 }

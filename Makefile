@@ -9,15 +9,12 @@
 CC = gcc
 CFLAGS = -Wall -Werror -lefence
 
-EXES = lisod echo_client
+EXES = lisod 
 
-default: $(EXES)
+all: $(EXES)
 
 lisod:
 	$(CC) $(CFLAGS) lisod.c log.c -o lisod
-
-echo_client:
-	$(CC) $(CFLAGS) echo_client.c -o echo_client
 
 clean:
 	@rm -rf $(EXES) lisod.log
