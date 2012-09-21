@@ -11,6 +11,7 @@
 #include <sys/stat.h>
 #include <sys/mman.h>
 #include <fcntl.h>
+#include <signal.h>
 #include "log.h"
 
 /* this data structure wraps some attributes used for sending data with client */
@@ -48,9 +49,11 @@ typedef struct
 } HTTPContext;
 
 /* declaration of subroutines */
-void init(int argc, char* argv[]);
 void clean();
 void usage_exit();
+void lisod_shutdown();
+void signal_handler(int sig);
+void daemonize();
 int  close_socket(int sock);
 
 void init_pool(int sock, pool *p);

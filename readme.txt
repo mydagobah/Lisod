@@ -15,7 +15,8 @@ these new events handled respectively.
 The part the server adds support for HTTP methods including HEAD, GET and
 POST. The server also supports persistent connection handling. The server is
 tolerant to any requests and keeps running. It returns proper error messages
-to client whenever request is not following RFC 2616.
+to client whenever request is not following RFC 2616. 
+Add daemonize the server.
 For POST, a proper parse of the request body needs to be done.
 
 ***** Check point 3 - HTTPS via TLS *****

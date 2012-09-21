@@ -11,18 +11,24 @@
 *              1. HTTP1.1: support HEAD, GET and POST                          *
 *              2. Support connections from multiple clients                    *
 *              3. Log debug, info and error in the log file                    *
-*                                                                              *
+*              4. Run server as a daemon process                               *
 *                                                                              *
 * Authors:     Wenjun Zhang <wenjunzh@andrew.cmu.edu>,                         *
 *                                                                              *
 * Usage:       ./lisod <HTTP port> <HTTPS port> <log file> <lock file>         *
 *              <www folder> <CGI folder> <private key> <certificate file>      *
+* example:     ./lisod 8080 4443 lisod.log lisod.lock www cgi key cert         *
 *                                                                              *
+*              To stop the server, first find the pid                          *
+*                 ps -ef | grep lisod                                          *
+*              then kill the process,                                          *
+*                 kill <pid>                                                   *
 *******************************************************************************/
 
 #include "lisod.h"
 
 struct lisod_state STATE;
+static int KEEPON = 1;
 
 int main(int argc, char* argv[])
 {
@@ -31,10 +37,29 @@ int main(int argc, char* argv[])
     struct sockaddr_in addr, client_addr;
     struct timeval tv;
     static pool pool;
+    sigset_t mask;
 
-    init(argc, argv);
+    if (argc != 9)  usage_exit();
 
+    // parse arguments
+    STATE.port = (int)strtol(argv[1], (char**)NULL, 10);
+    STATE.s_port = (int)strtol(argv[2], (char**)NULL, 10);
+    strcpy(STATE.log_path, argv[3]);
+    strcpy(STATE.lck_path, argv[4]);
+    strcpy(STATE.www_path, argv[5]);
+    strcpy(STATE.cgi_path, argv[6]);
+    strcpy(STATE.key_path, argv[7]);
+    strcpy(STATE.ctf_path, argv[8]);
+
+    if (STATE.www_path[strlen(STATE.www_path)-1] == '/')
+         STATE.www_path[strlen(STATE.www_path)-1] = '\0';
+
+    daemonize();
+
+    STATE.log = log_open(STATE.log_path);
+    
     Log("Start Liso server");
+
 
     /* all networked programs must create a socket
      * PF_INET - IPv4 Internet protocols
@@ -74,19 +99,23 @@ int main(int argc, char* argv[])
     init_pool(sock, &pool);
 
     // the main loop to wait for connections and serve requests
-    while (1)
+    while (KEEPON)
     {
        tv.tv_sec = 1; // timeout = 1 sec
        tv.tv_usec = 0;
        pool.ready_set = pool.read_set;
+
+       sigemptyset(&mask);
+       sigaddset(&mask, SIGHUP);
+       sigprocmask(SIG_BLOCK, &mask, NULL);
        pool.nready = select(pool.maxfd+1, &pool.ready_set, NULL, NULL, &tv);
+       sigprocmask(SIG_UNBLOCK, &mask, NULL);
 
        if (pool.nready < 0)
        {
            if (errno == EINTR)
            {
-               Log("Server is shut down.");
-               clean();
+               Log("Shut down Server >>>>>>>>>>>>>>>>>>>>");
                break;
            }
           
@@ -124,37 +153,56 @@ int main(int argc, char* argv[])
        check_clients(&pool);
     }
 
-    Log("cleaning up.......");
-    clean();
-    Log("Done!");
-    return EXIT_SUCCESS;
+    lisod_shutdown();
+
+    return 0; // to make compiler happy
 }
 
-/******************************************************************************
-* subroutine: init                                                            *
-* purpose:    parse arguments and perform all other initialization            *
-* parameters: argc - the number of arguments passed to main                   *
-*             argv - the array of arguments passed to main                    *
-* return:     none                                                            *
-******************************************************************************/
-void init(int argc, char* argv[])
+void lisod_shutdown()
 {
-    if (argc != 9)  usage_exit();
+    Log("cleaning up.......");
+    clean();
+    exit(EXIT_SUCCESS);
+}
 
-    // parse arguments
-    STATE.port = (int)strtol(argv[1], (char**)NULL, 10);
-    STATE.s_port = (int)strtol(argv[2], (char**)NULL, 10);
-    strcpy(STATE.log_path, argv[3]);
-    strcpy(STATE.lck_path, argv[4]);
-    strcpy(STATE.www_path, argv[5]);
-    strcpy(STATE.cgi_path, argv[6]);
-    strcpy(STATE.key_path, argv[7]);
-    strcpy(STATE.ctf_path, argv[8]);
+void daemonize()
+{
+    int i, lfp, pid;
+    char str[256] = {0};
+    
+    // drop to have init as parent process
+    pid = fork();
+    if (pid < 0) exit(EXIT_FAILURE);
+    if (pid > 0) exit(EXIT_SUCCESS);
 
-    if (STATE.www_path[strlen(STATE.www_path)-1] == '/')
-         STATE.www_path[strlen(STATE.www_path)-1] = '\0';
+    // obtain a new process group 
+    setsid();
 
-    STATE.log = log_open(STATE.log_path);
+    // close all descriptor
+    for (i=getdtablesize(); i>=0; i--)  close(i);
+
+    // redirect stdio
+    i = open("dev/null", O_RDWR);
+    dup(i); //stdout
+    dup(i); //stderr
+
+    // set newly created file permissons
+    umask(027);
+ 
+    // setup lock file
+    lfp = open(STATE.lck_path, O_RDWR|O_CREAT|O_EXCL, 0640);
+
+    if (lfp < 0) exit(EXIT_FAILURE);
+    if(lockf(lfp, F_TLOCK, 0) < 0) exit(EXIT_SUCCESS);
+
+    // first instance continues
+    sprintf(str, "%d\n", getpid());
+    write(lfp, str, strlen(str)); // record pid to lockfile
+
+    signal(SIGCHLD, SIG_IGN); // ignore 
+
+    signal(SIGHUP, signal_handler);  // install hangup signal
+    signal(SIGTERM, signal_handler); // kill signal
 }
 
 /******************************************************************************
@@ -732,6 +780,20 @@ void clean()
 {
     fclose(STATE.log);
     close_socket(STATE.sock);
+}
+
+void signal_handler(int sig)
+{
+    switch(sig)
+    {
+        case SIGHUP:
+            Log("hangup signal catched");
+            break; // rehash the server;
+        case SIGTERM:
+            KEEPON = 0;
+        default:
+            break; // unhandled signals
+    }
 }
 
 /******************************************************************************
