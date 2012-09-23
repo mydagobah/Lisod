@@ -23,7 +23,7 @@ FILE *log_open(const char *path)
     return logfile;
 }
 
-void Log(const char *message)
+void Log(const char *format, ...)
 {
     time_t ltime;
     struct tm *Tm;
@@ -31,12 +31,16 @@ void Log(const char *message)
     ltime = time(NULL);
     Tm = localtime(&ltime);
 
-    fprintf(STATE.log, "[%04d%02d%02d %02d:%02d:%02d] %s \n",
+    fprintf(STATE.log, "[%04d%02d%02d %02d:%02d:%02d] ",
                  Tm->tm_year+1900,
                  Tm->tm_mon+1,
                  Tm->tm_mday,
                  Tm->tm_hour,
                  Tm->tm_min,
-                 Tm->tm_sec,
-                 message);
+                 Tm->tm_sec
+           );
+
+    va_list ap;
+    va_start(ap, format);
+    vfprintf(STATE.log, format, ap);
 }

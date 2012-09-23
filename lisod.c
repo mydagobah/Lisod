@@ -58,7 +58,7 @@ int main(int argc, char* argv[])
 
     STATE.log = log_open(STATE.log_path);
     
-    Log("Start Liso server");
+    Log("Start Liso server \n");
 
 
     /* all networked programs must create a socket
@@ -74,7 +74,7 @@ int main(int argc, char* argv[])
     }
 
     STATE.sock = sock;
-    Log("Create socket success!");
+    Log("Create socket success: sock =  %d \n", sock);
 
     addr.sin_family = AF_INET;
     addr.sin_port = htons(STATE.port);
@@ -86,7 +86,7 @@ int main(int argc, char* argv[])
         clean();
         return EXIT_FAILURE;
     }
-    Log("bind success!");
+    Log("Bind success! \n");
 
     if (listen(sock, MAX_CONN))
     {
@@ -94,7 +94,7 @@ int main(int argc, char* argv[])
         clean();
         return EXIT_FAILURE;
     }
-    Log("listen success! >>>>>>>>>>>>>>>>>>>>");
+    Log("Listen success! >>>>>>>>>>>>>>>>>>>> \n");
 
     init_pool(sock, &pool);
 
@@ -115,11 +115,11 @@ int main(int argc, char* argv[])
        {
            if (errno == EINTR)
            {
-               Log("Shut down Server >>>>>>>>>>>>>>>>>>>>");
+               Log("Shut down Server >>>>>>>>>>>>>>>>>>>> \n");
                break;
            }
           
-           Log("Error: select error");
+           Log("Error: select error \n");
            continue;
        }
 
@@ -136,7 +136,7 @@ int main(int argc, char* argv[])
                continue;
            }
 
-           Log("accept client");
+           Log("accept client: client_fd=%d \n", client_fd);
 
            if (STATE.is_full)
            {
@@ -160,7 +160,7 @@ int main(int argc, char* argv[])
 
 void lisod_shutdown()
 {
-    Log("cleaning up.......");
+    Log("cleaning up. \n");
     clean();
     exit(EXIT_SUCCESS);
 }
@@ -292,7 +292,7 @@ int add_client(int client_fd, pool *p)
     if (i == (FD_SETSIZE - 5))
     {   
         STATE.is_full = 1;
-        Log ("Error: too many clients.");
+        Log ("Error: too many clients. \n");
         return -1;
     }
     return 0;
@@ -349,7 +349,7 @@ void process_request(int id, pool *p, int *is_closed)
 {
     HTTPContext *context = (HTTPContext *)calloc(1, sizeof(HTTPContext));
 
-    Log("Start processing request.");
+    Log("Start processing request. \n");
 
     // parse request line (get method, uri, version)
     if (parse_requestline(id, p, context, is_closed) < 0) goto Done;
@@ -395,7 +395,7 @@ void process_request(int id, pool *p, int *is_closed)
 
     Done:
     free(context); 
-    Log("End of processing request.");
+    Log("End of processing request. \n");
 }
 
 /******************************************************************************
@@ -416,7 +416,7 @@ int parse_requestline(int id, pool *p, HTTPContext *context, int *is_closed)
     if (rio_readlineb(&p->clientrio[id], buf, MAX_LINE) < 0)
     {
         *is_closed = 1;
-        Log("Error: rio_readlineb error in process_request");
+        Log("Error: rio_readlineb error in process_request \n");
         serve_error(p->clientfd[id], "500", "Internal Server Error",
                     "The server encountered an unexpected condition.", *is_closed);
         return -1;
@@ -425,7 +425,7 @@ int parse_requestline(int id, pool *p, HTTPContext *context, int *is_closed)
     if (sscanf(buf, "%s %s %s", context->method, context->uri, context->version) < 3)
     {
         *is_closed = 1;
-        Log("Info: Invalid request line");
+        Log("Info: Invalid request line: '%s' \n", buf);
         serve_error(p->clientfd[id], "400", "Bad Request",
                     "The request is not understood by the server", *is_closed);
         return -1;
@@ -473,7 +473,7 @@ int parse_requestheaders(int id, pool *p, HTTPContext *context, int *is_closed)
             has_contentlen = 1;
             if (sscanf(buf, "%s %s", header, data) > 0)
                 context->content_len = (int)strtol(data, (char**)NULL, 10); 
-            Log(data);
+            Log("Debug: content-length=%d \n", context->content_len);
         }  
 
     } while(strcmp(buf, "\r\n"));
@@ -624,7 +624,7 @@ int serve_body(int client_fd, HTTPContext *context, int *is_closed)
     
     if ((fd = open(context->filename, O_RDONLY, 0)) < 0)
     {
-        Log("Error: Cann't open file");
+        Log("Error: Cann't open file \n");
         return -1; ///TODO what error code here should be?
     }
 
@@ -764,7 +764,7 @@ int close_socket(int sock)
 {
     if (close(sock))
     {
-        Log("Error: failed closing socket.");
+        Log("Error: failed closing socket. \n");
         return -1;
     }
     return 0;
@@ -787,7 +787,7 @@ void signal_handler(int sig)
     switch(sig)
     {
         case SIGHUP:
-            Log("hangup signal catched");
+            Log("hangup signal catched \n");
             break; // rehash the server;
         case SIGTERM:
             KEEPON = 0;
