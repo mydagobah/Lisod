@@ -39,6 +39,7 @@ typedef struct
 /* this datastructure wraps some attributes used for processing HTTP requests */
 typedef struct
 {
+    int  is_secure;
     int  is_static;
     int  content_len;
     char method[MIN_LINE];
@@ -56,7 +57,7 @@ void signal_handler(int sig);
 void daemonize();
 int  close_socket(int sock);
 
-void init_pool(int sock, pool *p);
+void init_pool(pool *p);
 int  add_client(int client_fd, pool *p);
 void remove_client(int index, pool *p);
 void check_clients(pool *p);

@@ -18,6 +18,7 @@ struct lisod_state
     int  port;
     int  s_port;
     int  sock;
+    int  s_sock;
     char log_path[MAX_PATH];
     char lck_path[MAX_PATH];
     char www_path[MAX_PATH];

@@ -32,7 +32,7 @@ static int KEEPON = 1;
 
 int main(int argc, char* argv[])
 {
-    int sock, client_fd;
+    int sock, s_sock, client_fd;
     socklen_t client_size;
     struct sockaddr_in addr, client_addr;
     struct timeval tv;
@@ -55,20 +55,19 @@ int main(int argc, char* argv[])
          STATE.www_path[strlen(STATE.www_path)-1] = '\0';
 
     daemonize();
-
     STATE.log = log_open(STATE.log_path);
     
-    Log("Start Liso server \n");
-
+    Log("Start Liso server. Server is running in background. \n");
 
     /* all networked programs must create a socket
      * PF_INET - IPv4 Internet protocols
      * SOCK_STREAM - sequenced, reliable, two-way, connection-based byte stream
      * 0 (protocol) - use default protocol
      */
+    // create sock for HTTP connection
     if ((sock = socket(PF_INET, SOCK_STREAM, 0)) == -1)
     {
-        Log("Error: failed creating socket.\n");
+        Log("Error: failed creating socket for HTTP connection.\n");
         fclose(STATE.log);
         return EXIT_FAILURE;
     }
@@ -96,7 +95,39 @@ int main(int argc, char* argv[])
     }
     Log("Listen success! >>>>>>>>>>>>>>>>>>>> \n");
 
-    init_pool(sock, &pool);
+    // create sock for HTTPS connection
+    Log("Create sock for HTTPS connection \n");
+    if ((s_sock = socket(PF_INET, SOCK_STREAM, 0)) == -1)
+    {
+        Log("Error: failed creating socket for HTTPS connection.\n");
+        close(sock);
+        fclose(STATE.log);
+        return EXIT_FAILURE;
+    }
+
+    STATE.s_sock = s_sock;
+    Log("Create HTTPS socket success: sock =  %d \n", s_sock);
+
+    addr.sin_family = AF_INET;
+    addr.sin_port = htons(STATE.s_port);
+    addr.sin_addr.s_addr = INADDR_ANY;
+    /* servers bind sockets to ports---notify the OS they accept connections */
+    if (bind(s_sock, (struct sockaddr *) &addr, sizeof(addr)))
+    {
+        Log("Error: failed binding socket.\n");
+        close(sock); close(s_sock); fclose(STATE.log);
+        return EXIT_FAILURE;
+    }
+    Log("Bind success! \n");
+
+    if (listen(s_sock, MAX_CONN))
+    {
+        Log("Error: listening on socket.\n");
+        close(sock); close(s_sock); fclose(STATE.log);
+        return EXIT_FAILURE;
+    }
+    Log("Listen success! >>>>>>>>>>>>>>>>>>>> \n");
+    init_pool(&pool);
 
     // the main loop to wait for connections and serve requests
     while (KEEPON)
@@ -155,7 +186,7 @@ int main(int argc, char* argv[])
 
     lisod_shutdown();
 
-    return 0; // to make compiler happy
+    return EXIT_SUCCESS; // to make compiler happy
 }
 
 void lisod_shutdown()
@@ -237,7 +268,7 @@ void usage_exit()
 *             p    - pointer to pool instance                                 *
 * return:     none                                                            *
 ******************************************************************************/
-void init_pool (int sock, pool *p)
+void init_pool (pool *p)
 {
     // Initialize descriptors
     int i;
@@ -245,10 +276,10 @@ void init_pool (int sock, pool *p)
     for (i=0; i< FD_SETSIZE; i++)
         p->clientfd[i] = -1;
 
-    // Initially, sock is the only member of select read_set
-    p->maxfd = sock;
+    p->maxfd = STATE.s_sock;
     FD_ZERO(&p->read_set);
-    FD_SET(sock, &p->read_set);
+    FD_SET(STATE.sock, &p->read_set);
+    FD_SET(STATE.s_sock, &p->read_set);
     STATE.is_full = 0;
 }
 
@@ -431,6 +462,8 @@ int parse_requestline(int id, pool *p, HTTPContext *context, int *is_closed)
         return -1;
     }
 
+    Log("Request: method=%s, uri=%s, version=%s \n",
+        context->method, context->uri, context->version);
     return 0;
 }
 
@@ -445,8 +478,8 @@ int parse_requestline(int id, pool *p, HTTPContext *context, int *is_closed)
 ******************************************************************************/
 int parse_requestheaders(int id, pool *p, HTTPContext *context, int *is_closed)
 {
-    int  ret, cnt = 0, has_contentlen = 0;
-    char buf[MAX_LINE], header[MIN_LINE], data[MIN_LINE];
+    int  ret, cnt = 0, has_contentlen = 0, port;
+    char buf[MAX_LINE], header[MIN_LINE], data[MIN_LINE], pbuf[MIN_LINE];
     
     context->content_len = -1; 
 
@@ -465,7 +498,20 @@ int parse_requestheaders(int id, pool *p, HTTPContext *context, int *is_closed)
                        "Request header too long.", *is_closed);
             return -1;
         }
-        
+       
+        // parse Host header
+        if (strstr(buf, "Host:"))
+        {
+            if (sscanf(buf, "%s: %s:%s", header, data, pbuf) > 0) {
+                port = (int)strtol(pbuf, (char**)NULL, 10);
+                if (port == STATE.s_port)
+                {
+                    context->is_secure = 1;
+                    Log("Secure connection \n");
+                } 
+            }
+        }
+ 
         if (strstr(buf, "Connection: close")) *is_closed = 1;
 
         if (strstr(buf, "Content-Length")) 
